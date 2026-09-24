@@ -29,24 +29,7 @@ The initial PDF specification (*"ULPF Deep-Dive Engineering & Architecture Speci
 
 Here is a side-by-side comparison of what the PDF suggested, why it had flaws, and how we solved it:
 
-```mermaid
-flowchart TD
-    subgraph PDF_Theory ["Theoretical Proposal (Ulpf -1.pdf)"]
-        A1["eBPF / XDP Ingestion<br/>(Bypasses Linux Kernel)"] --> B1["External Redpanda Broker<br/>(Heavy C++ Queue)"]
-        B1 --> C1["O(1) Radix Tree Parser<br/>(Theoretical All-in-One)"]
-        C1 --> D1["MiniLM + HDBSCAN<br/>(Heavy AI Embeddings)"]
-        D1 --> E1["DeepSeek Cloud LLM<br/>(External AI Prompting)"]
-    end
-
-    subgraph ULPF_Reality ["Our Production Rust Implementation (ULPF)"]
-        A2["Async Tokio Sockets<br/>(SO_REUSEPORT on all cores)"] --> B2["Direct In-Memory Buffering<br/>(Zero Broker Overhead)"]
-        B2 --> C2["Aho-Corasick Classifier (49 ns)<br/>+ Zero-Copy Byte Extractors"]
-        C2 --> D2["Native Rust Drain3 Miner<br/>(< 10 µs/log, Zero GPU)"]
-        D2 --> E2["100% Air-Gapped Synthesizer<br/>(Compiles Regex in 3.88 ms)"]
-    end
-
-    PDF_Theory -.->|Engineered for Reality| ULPF_Reality
-```
+![Theoretical proposal (red) engineered into the production ULPF pipeline (green)](diagrams/proposal-vs-reality.svg)
 
 ### Detailed Breakdown of Differences
 
@@ -113,26 +96,7 @@ Think of a Merkle Tree like a **1,000-team sports tournament**:
 - Each match winner advances to the next round until there is only **1 Grand Champion (The Merkle Root)**.
 - If an impostor secretly swaps out the score of Match #1 at the bottom of the bracket, that change bubbles up through every subsequent round, and the **Championship Trophy Hash completely changes**!
 
-```mermaid
-graph TD
-    Root["Merkle Root (Anchored in Ledger)<br/><code>7820a61cf032...</code>"]
-    H12["Internal Node 1-2<br/><code>SHA256(Node1 + Node2)</code>"]
-    H34["Internal Node 3-4<br/><code>SHA256(Node3 + Node4)</code>"]
-    L1["Leaf #0: Cisco Log<br/><code>SHA256(0x00 + log_0)</code>"]
-    L2["Leaf #1: Fortinet Log<br/><code>SHA256(0x00 + log_1)</code>"]
-    L3["Leaf #2: Palo Alto Log<br/><code>SHA256(0x00 + log_2)</code>"]
-    L4["Leaf #3: Suricata Log<br/><code>SHA256(0x00 + log_3)</code>"]
-
-    Root --> H12
-    Root --> H34
-    H12 --> L1
-    H12 --> L2
-    H34 --> L3
-    H34 --> L4
-
-    classDef tampered fill:#ffcccc,stroke:#ff0000,stroke-width:2px;
-    class L1 tampered;
-```
+![Merkle tree with tampered Leaf #0 — one changed byte re-roots the whole tree](diagrams/merkle-tree.svg)
 
 ### What Happened in Step 4 of the Demo?
 
@@ -165,23 +129,7 @@ Traditional firewalls only flag logs when a specific rule triggers. But what if 
 
 Instead of slow, expensive deep learning, ULPF uses **Drain3 Log Template Mining**:
 
-```mermaid
-graph TD
-    Incoming["Incoming Log: <br/><code>Teardown TCP connection 1002045 for outside:192.168.1.5...</code>"]
-    T1["Tokenize Log by Whitespace"]
-    T2["Mask Dynamic Parameters<br/>(IPs, Ports, Numbers -> &lt;*&gt;)"]
-    T3["Traverse Prefix Tree (Depth = 4)"]
-    Match{"Matches Existing<br/>Cluster?"}
-    Known["Update Cluster Frequency<br/>(Normal Traffic)"]
-    Surge{"Sudden Surge in<br/>Rare Cluster?"}
-    Alert["FIRE ANOMALY ALERT!<br/>Possible Evasion / Parser Drift"]
-    NewCluster["Create New Cluster Template<br/>(Microsecond Latency)"]
-
-    Incoming --> T1 --> T2 --> T3 --> Match
-    Match -->|Yes| Known --> Surge
-    Surge -->|Yes| Alert
-    Match -->|No| NewCluster
-```
+![Drain template-mining and anomaly-alert flow](diagrams/drain-anomaly-flow.svg)
 
 Because Drain3 executes in **$< 10$ microseconds**, it monitors the structural health of every incoming log stream in real time with zero performance degradation.
 

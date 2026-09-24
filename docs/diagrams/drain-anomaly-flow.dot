@@ -1,0 +1,23 @@
+// Drain template mining + anomaly flow — source for docs/SIMPLIFIED_EXPLANATION_AND_BENCHMARKS.md §5.
+// Regenerate: dot -Tsvg docs/diagrams/drain-anomaly-flow.dot -o docs/diagrams/drain-anomaly-flow.svg
+digraph drain_anomaly_flow {
+  graph [rankdir=TB, bgcolor="white", pad="0.2", nodesep="0.35", ranksep="0.45", fontname="Helvetica"];
+  node [shape="box", style="filled,rounded", fillcolor="#f6f8fa", color="#57606a", fontname="Helvetica", fontsize="11", margin="0.16,0.09"];
+  edge [color="#57606a", fontname="Helvetica", fontsize="10", arrowsize="0.7"];
+
+  incoming [label="Incoming log:\nTeardown TCP connection 1002045 for outside:192.168.1.5…", fillcolor="#ddf4ff", color="#0969da"];
+  t1 [label="Tokenize log by whitespace"];
+  t2 [label="Mask dynamic parameters\n(IPs, ports, numbers → <*>)"];
+  t3 [label="Traverse prefix tree (depth = 4)"];
+  match [label="Matches existing\ncluster?", shape=diamond, style=filled, fillcolor="#fff8c5", color="#9a6700", fontsize=10, margin="0.05,0.02"];
+  known [label="Update cluster frequency\n(normal traffic)", fillcolor="#dafbe1", color="#1a7f37"];
+  surge [label="Sudden surge in\nrare cluster?", shape=diamond, style=filled, fillcolor="#fff8c5", color="#9a6700", fontsize=10, margin="0.05,0.02"];
+  alert [label="FIRE ANOMALY ALERT!\npossible evasion / parser drift", fillcolor="#ffebe9", color="#cf222e"];
+  newc  [label="Create new cluster template\n(microsecond latency)"];
+
+  incoming -> t1 -> t2 -> t3 -> match;
+  match -> known [label=" yes"];
+  known -> surge;
+  surge -> alert [label=" yes"];
+  match -> newc [label=" no"];
+}

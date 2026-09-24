@@ -11,40 +11,9 @@ Traditional log pre-processing pipelines suffer from three fundamental architect
 
 **ULPF** solves these challenges via a modular, high-performance architecture written in **Rust**, normalizing any perimeter device log into standard **Open Cybersecurity Schema Framework (OCSF 1.3)** while cryptographically proving non-repudiation using **RFC 6962 Merkle Trees** and enabling **100% air-gapped AI onboarding**.
 
-```
-┌────────────────────────────────────────────────────────────────────────────────────────┐
-│                               ULPF PIPELINE ARCHITECTURE                                │
-└────────────────────────────────────────────────────────────────────────────────────────┘
- [Perimeter Network Devices] ─── (Syslog UDP/TCP: Cisco, Fortinet, Palo Alto, Suricata)
-               │
-               ▼
- ┌──────────────────────────────────────────────────────────────────────────────────────┐
- │ 1. HIGH-SPEED ASYNC INGESTION PLANE (crates/ulpf-core)                               │
- │   • Asynchronous Multi-Threaded Socket Pool (Tokio + SO_REUSEPORT)                   │
- │   • Time-Ordered UUIDv7 Event ID & Nanosecond Ingestion Timestamp Generation         │
- │   • 100% Lossless Raw Log Retention Buffer                                           │
- └──────────────────────────────────────────┬───────────────────────────────────────────┘
-                                            ▼
- ┌──────────────────────────────────────────────────────────────────────────────────────┐
- │ 2. TWO-TIER ZERO-COPY PARSING & NORMALIZATION (crates/ulpf-core)                     │
- │   • Tier 1: Aho-Corasick Multi-Pattern Classifier ($O(m)$ Vendor Signature Detection)│
- │   • Tier 2: Zero-Copy Token Extractors (Zero Heap String Allocations)                │
- │   • Standard OCSF 1.3 Mapping: Class UID 4001 (NetworkActivity)                      │
- └─────────────────────┬────────────────────────────────────────────┬───────────────────┘
-                       │ (Normalized Events)                        │ (Unmapped / Drift)
-                       ▼                                            ▼
- ┌───────────────────────────────────────────┐ ┌────────────────────────────────────────┐
- │ 3. INTEGRITY & STORAGE PLANE              │ │ 4. AIR-GAPPED AI & ANOMALY PLANE       │
- │    (crates/ulpf-integrity)                │ │    (crates/ulpf-ai)                    │
- │   • RFC 6962 Standard Merkle Tree         │ │   • Native Rust Drain3 Template Miner  │
- │     - Leaf: SHA256(0x00 || raw_log)       │ │     - Microsecond structural clustering│
- │     - Node: SHA256(0x01 || left || right) │ │     - Real-time Evasion Anomaly Alert  │
- │   • Dual-Trigger Batching (1000 logs / 2s)│ │   • Air-Gapped 1-Click Onboarder       │
- │   • O(log N) Inclusion Proof Generation   │ │     - Heuristic / Local SLM Synthesizer│
- │   • Columnar Apache Parquet WORM Storage  │ │     - Auto-Validated Non-Greedy Regex  │
- │   • Forensic Bit-Flip Tamper Detector     │ │     - Hot Dynamic Parser Loading       │
- └───────────────────────────────────────────┘ └────────────────────────────────────────┘
-```
+![ULPF pipeline architecture: (1) async ingestion plane, (2) two-tier zero-copy parsing & normalization, forking to (3) integrity & storage plane and (4) air-gapped AI & anomaly plane](diagrams/ulpf-architecture-planes.svg)
+
+> Source: [`diagrams/ulpf-architecture-planes.dot`](diagrams/ulpf-architecture-planes.dot) — regenerate with `dot -Tsvg diagrams/ulpf-architecture-planes.dot -o diagrams/ulpf-architecture-planes.svg`.
 
 ---
 

@@ -1,0 +1,19 @@
+// ULPF hero flow — source for the README.md opening diagram.
+// Regenerate: dot -Tsvg docs/diagrams/hero-flow.dot -o docs/diagrams/hero-flow.svg
+digraph hero_flow {
+  graph [rankdir=LR, bgcolor="white", pad="0.2", nodesep="0.35", ranksep="0.55", fontname="Helvetica"];
+  node [shape="box", style="filled,rounded", fillcolor="#f6f8fa", color="#57606a", fontname="Helvetica", fontsize="11", margin="0.16,0.09"];
+  edge [color="#57606a", fontname="Helvetica", fontsize="10", arrowsize="0.7"];
+
+  input    [label="raw syslog / JSON / CSV", fillcolor="#ddf4ff", color="#0969da"];
+  classify [label="classify"];
+  parse    [label="zero-copy parse"];
+  ocsf     [label="OCSF 1.3 JSON", fillcolor="#dafbe1", color="#1a7f37"];
+  hash     [label="SHA-256(raw) · UUIDv7 event_id", fillcolor="#fff8c5", color="#9a6700"];
+  merkle   [label="RFC 6962 Merkle root", fillcolor="#fff8c5", color="#9a6700"];
+  ledger   [label="ledger.jsonl (append-only)", fillcolor="#fff8c5", color="#9a6700"];
+  worm     [label="Parquet WORM block + verify (exit 0 / 1 / 2)", fillcolor="#dafbe1", color="#1a7f37"];
+
+  input -> classify -> parse -> ocsf -> worm;
+  input -> hash -> merkle -> ledger -> worm;
+}
