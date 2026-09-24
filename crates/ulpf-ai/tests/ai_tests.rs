@@ -741,3 +741,97 @@ fn test_differential_baseline_vs_tiered() {
         native_firing
     );
 }
+
+// ============================================================================
+// P5 — NULL-CORRECT AUDIT RULE (pre-registered)
+// ============================================================================
+// `None` on src/dst ip, ports, or protocol is audited as CORRECT only when the
+// raw line carries no valid marker for that field. A marker with an absent
+// field remains a failure — the rule masks nothing that evidence contradicts.
+
+/// The honest-null families (ASA 113019, PAN ICMP CSV) must pass the marker
+/// gates: no valid port marker, no IP-protocol marker, single IP.
+#[test]
+fn test_null_correct_honest_families_have_no_markers() {
+    use ulpf_ai::EvaluatorEngine as E;
+
+    // ASA 113019: exactly one IP (the peer -> src), no port keys, no
+    // IP-protocol tokens ("Session Type: SSL" is an app protocol, not an
+    // IP-layer marker).
+    let a113019 = "<164>Sep 21 14:00:12 asa-dc-01 %ASA-4-113019: Group = RemoteAccess-Corp, Username = agarcia, IP = 203.0.113.163, Session disconnected. Session Type: SSL, Duration: 0h:39m";
+    assert!(
+        !E::raw_has_port_marker(a113019),
+        "113019 carries no port evidence"
+    );
+    assert!(
+        !E::raw_has_protocol_marker(a113019),
+        "SSL is not an IP-protocol marker"
+    );
+    assert!(
+        !E::raw_has_dst_ip_marker(a113019),
+        "a single IP cannot evidence a second endpoint"
+    );
+    assert!(!E::raw_has_src_ip_marker(a113019));
+
+    // PAN ICMP traffic (CSV): no kv port keys anywhere -> honest port null
+    // even though the line is full of numbers (subnet/timestamp digits must
+    // never count as port evidence).
+    let icmp = "1,2026/09/21 14:00:01,001801000001,TRAFFIC,deny,2304,2026/09/21 14:00:00,192.168.1.19,203.0.113.87,198.51.100.32,203.0.113.87,Trust_to_Untrust,acme\\agarcia,,ping,vsys1,DMZ,WAN,ethernet1/1,ethernet1/2,default,,100412,1,0,0,0,0,0x400000,icmp,drop,4983547,454039,4529508,9510,2026/09/21 13:56:28,213,web-hosting,0,100000129,0x0";
+    assert!(
+        !E::raw_has_port_marker(icmp),
+        "CSV without port keys is not port evidence"
+    );
+    // Both endpoints present -> the two-IP rule fires (irrelevant here: the
+    // engine fills both, so the None branch is never consulted).
+    assert!(E::raw_has_src_ip_marker(icmp));
+    assert!(E::raw_has_dst_ip_marker(icmp));
+}
+
+/// Marker-present cases must STILL be failures — the rule can never launder an
+/// extraction bug. Also pins the marker detectors' false-positive edges.
+#[test]
+fn test_null_correct_rule_still_fails_on_markers() {
+    use ulpf_ai::EvaluatorEngine as E;
+
+    // valid kv port value -> port marker
+    assert!(E::raw_has_port_marker(
+        "CEF:0|V|P|1|2|n|3|src=1.1.1.1 spt=443 dst=2.2.2.2 dpt=80"
+    ));
+    // INVALID port value (0) is not a valid marker -> ICMP sport=0 honest null
+    assert!(!E::raw_has_port_marker(
+        "date=2026-09-21 devname=FGT type=traffic sport=0 dport=0 proto=1"
+    ));
+    // interface:IP/PORT (ASA) is a marker...
+    assert!(E::raw_has_port_marker(
+        "%ASA-6-302013: Built outbound TCP connection 1 for outside:10.0.0.1/53 to inside:10.0.0.2/80"
+    ));
+    // ...but a bare CIDR must NOT be mistaken for one
+    assert!(!E::raw_has_port_marker("route 10.0.0.0/24 via 192.168.1.1"));
+    // bracketed IPv6 with port -> marker
+    assert!(E::raw_has_port_marker(r#"flow from [2001:db8::1]:443"#));
+
+    // role keys -> endpoint markers even without a second IP
+    assert!(E::raw_has_dst_ip_marker(
+        r#"{"src_ip":"1.1.1.1","dst_ip":"2.2.2.2"}"#
+    ));
+    assert!(E::raw_has_dst_ip_marker("srcip=1.1.1.1 dstip=9.9.9.9"));
+    // two distinct IPv4s -> both roles evidenced
+    assert!(E::raw_has_src_ip_marker("from 1.1.1.1 to 2.2.2.2"));
+    // version strings / timestamps are NOT IPs
+    assert!(!E::raw_has_dst_ip_marker(
+        "CEF:0|Fortinet|FortiGate|v7.0.2|1|n|3|src=1.2.3.4"
+    ));
+
+    // protocol markers: kv key, name token, JSON key
+    assert!(E::raw_has_protocol_marker("proto=6"));
+    assert!(E::raw_has_protocol_marker("proto=17"));
+    assert!(E::raw_has_protocol_marker(
+        "%ASA-4-106023: Deny tcp src outside:1.1.1.1/1234 dst inside:2.2.2.2/80"
+    ));
+    assert!(E::raw_has_protocol_marker(r#"{"proto":"udp"}"#));
+    // non-protocol names must never count
+    assert!(!E::raw_has_protocol_marker(
+        "Session disconnected. Session Type: SSL"
+    ));
+    assert!(!E::raw_has_protocol_marker("greater things coming"));
+}

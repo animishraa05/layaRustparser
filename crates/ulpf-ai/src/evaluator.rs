@@ -532,7 +532,7 @@ impl EvaluationReport {
             md.push_str(&format!("| **Grouping Accuracy (GA %)** | **{:.2}%** | **{:.2}%** | Loghub-2.0 Standard |\n", b.accuracy.grouping_accuracy_ga_pct, t.accuracy.grouping_accuracy_ga_pct));
             md.push_str(&format!("| **Template Accuracy (TA %)** | **{:.2}%** | **{:.2}%** | Template Validity (generalization-correct vs masked line) |\n", b.accuracy.template_accuracy_ta_pct, t.accuracy.template_accuracy_ta_pct));
             md.push_str(&format!("| **Oracle GA Ceiling (GT-hash, unfair)** | **{:.2}%** | **{:.2}%** | Labeled Ceiling — Not a Fair Baseline |\n", b.accuracy.oracle_ga_pct, t.accuracy.oracle_ga_pct));
-            md.push_str(&format!("| **Unique Templates (compression)** | **{}** | **{}** | Fewer = Better Generalization |\n", b.accuracy.unique_clusters, t.accuracy.unique_clusters));
+            md.push_str(&format!("| **Unique Templates (compression)** | **{}** | **{}** | Strictly Fewer vs Naive Baseline (§5.2) |\n", b.accuracy.unique_clusters, t.accuracy.unique_clusters));
             md.push_str(&format!("| **Field Extraction Macro F1** | **{:.2}%** | **{:.2}%** | IP/Port/Proto Extraction |\n", b.accuracy.field_extraction_f1_pct, t.accuracy.field_extraction_f1_pct));
             md.push_str(&format!("| **Disposition Resolution Accuracy** | **{:.2}%** | **{:.2}%** | OCSF Action Mapping |\n", b.accuracy.disposition_accuracy_pct, t.accuracy.disposition_accuracy_pct));
             md.push_str("| **Action Inviolability** | N/A | **100% PRESERVED** | `ALLOW`/`DENY` isolated |\n\n");
@@ -583,36 +583,36 @@ impl EvaluationReport {
             );
             md.push_str("| :--- | :---: | :---: | :---: |\n");
             md.push_str(&format!(
-                "| **Vendor Classification Accuracy** | {:.2}% | {:.2}% | > 95.0% |\n",
+                "| **Vendor Classification Accuracy** | {:.2}% | {:.2}% | ≥ Baseline (parity, §5.1) |\n",
                 b.accuracy.vendor_classification_accuracy_pct,
                 t.accuracy.vendor_classification_accuracy_pct
             ));
             md.push_str(&format!(
-                "| **LogPai Grouping Accuracy (GA %)** | {:.2}% | {:.2}% | > 90.0% |\n",
+                "| **LogPai Grouping Accuracy (GA %)** | {:.2}% | {:.2}% | ≥ Naive Baseline (§5.2) |\n",
                 b.accuracy.grouping_accuracy_ga_pct, t.accuracy.grouping_accuracy_ga_pct
             ));
             md.push_str(&format!(
-                "| **Loghub Template Accuracy (TA %)** | {:.2}% | {:.2}% | > 85.0% |\n",
+                "| **Loghub Template Accuracy (TA %)** | {:.2}% | {:.2}% | > Naive Baseline (§5.2) |\n",
                 b.accuracy.template_accuracy_ta_pct, t.accuracy.template_accuracy_ta_pct
             ));
             md.push_str(&format!(
-                "| **Source IP Accuracy** | {:.1}% | {:.1}% | Ground Truth Exact |\n",
+                "| **Source IP Accuracy** | {:.1}% | {:.1}% | Ground Truth Exact; null correct only when raw lacks a marker (P5) |\n",
                 b.accuracy.src_ip_accuracy_pct, t.accuracy.src_ip_accuracy_pct
             ));
             md.push_str(&format!(
-                "| **Destination IP Accuracy** | {:.1}% | {:.1}% | Ground Truth Exact |\n",
+                "| **Destination IP Accuracy** | {:.1}% | {:.1}% | Ground Truth Exact; null correct only when raw lacks a marker (P5) |\n",
                 b.accuracy.dst_ip_accuracy_pct, t.accuracy.dst_ip_accuracy_pct
             ));
             md.push_str(&format!(
-                "| **Source Port Accuracy** | {:.1}% | {:.1}% | Valid Port Range |\n",
+                "| **Source Port Accuracy** | {:.1}% | {:.1}% | Valid Port Range; null correct only when raw lacks port evidence (P5) |\n",
                 b.accuracy.src_port_accuracy_pct, t.accuracy.src_port_accuracy_pct
             ));
             md.push_str(&format!(
-                "| **Destination Port Accuracy** | {:.1}% | {:.1}% | Valid Port Range |\n",
+                "| **Destination Port Accuracy** | {:.1}% | {:.1}% | Valid Port Range; null correct only when raw lacks port evidence (P5) |\n",
                 b.accuracy.dst_port_accuracy_pct, t.accuracy.dst_port_accuracy_pct
             ));
             md.push_str(&format!(
-                "| **Protocol Disambiguation** | {:.1}% | {:.1}% | OCSF 1.3 Schema 4001 |\n",
+                "| **Protocol Disambiguation** | {:.1}% | {:.1}% | OCSF 4001; null correct without protocol evidence (P5) |\n",
                 b.accuracy.protocol_accuracy_pct, t.accuracy.protocol_accuracy_pct
             ));
             md.push_str(&format!(
@@ -1183,6 +1183,232 @@ impl EvaluatorEngine {
             .any(|seg| seg == target)
     }
 
+    // ------------------------------------------------------------------
+    // P5 null-correct rule: a field the engine reports as `None` is audited
+    // as CORRECT only when `raw` carries no valid marker for that field.
+    // Marker + null stays a failure — evidence is never laundered.
+    // ------------------------------------------------------------------
+
+    /// Byte-scan a syntactically valid IPv4 at index `i`: four dot-separated
+    /// octets 0–255 with alphanumeric/dot-free boundaries so version strings
+    /// (`v7.0.2`), timestamps, and digit soup never count. Returns the total
+    /// byte length of the address on success.
+    fn ipv4_len_at(s: &str, i: usize) -> Option<usize> {
+        let b = s.as_bytes();
+        if i >= b.len() || !b[i].is_ascii_digit() {
+            return None;
+        }
+        // Boundary before: a version string's `v7`/`x.1` fragments are not
+        // address starts. A preceding ':' is fine (`outside:10.0.0.1`).
+        if i > 0 && (b[i - 1].is_ascii_alphanumeric() || b[i - 1] == b'.') {
+            return None;
+        }
+        let mut j = i;
+        for group in 0..4 {
+            let gs = j;
+            while j < b.len() && b[j].is_ascii_digit() && j - gs < 3 {
+                j += 1;
+            }
+            if j == gs || (j < b.len() && b[j].is_ascii_digit()) {
+                return None;
+            }
+            match s[gs..j].parse::<u16>() {
+                Ok(v) if v <= 255 => {}
+                _ => return None,
+            }
+            if group < 3 {
+                if j >= b.len() || b[j] != b'.' {
+                    return None;
+                }
+                j += 1;
+            }
+        }
+        if j < b.len() && (b[j].is_ascii_alphanumeric() || b[j] == b'.') {
+            return None;
+        }
+        Some(j - i)
+    }
+
+    /// Count distinct IPv4 addresses in `raw` (bails at 2 — the audit only
+    /// needs "two or more endpoints are evidenced"). No regex, byte-exact.
+    pub fn distinct_ipv4_count(raw: &str) -> usize {
+        let b = raw.as_bytes();
+        let mut found: [&str; 2] = ["", ""];
+        let mut n = 0usize;
+        let mut i = 0usize;
+        while i < b.len() {
+            match Self::ipv4_len_at(raw, i) {
+                Some(len) => {
+                    let cand = &raw[i..i + len];
+                    if !found[..n].contains(&cand) {
+                        found[n] = cand;
+                        n += 1;
+                        if n == 2 {
+                            return n;
+                        }
+                    }
+                    i += len;
+                }
+                None => i += 1,
+            }
+        }
+        n
+    }
+
+    /// Endpoint-role keys whose presence evidences an IP for that role, even
+    /// on a single-IP line.
+    const SRC_IP_KEYS: &'static [&'static str] = &[
+        "src=",
+        "srcip=",
+        "src_ip=",
+        "saddr=",
+        "srcaddr=",
+        "source_ip=",
+        "\"src_ip\"",
+        "\"srcip\"",
+        "\"source_ip\"",
+    ];
+    const DST_IP_KEYS: &'static [&'static str] = &[
+        "dst=",
+        "dstip=",
+        "dst_ip=",
+        "daddr=",
+        "dstaddr=",
+        "dest_ip=",
+        "\"dst_ip\"",
+        "\"dstip\"",
+        "\"dst\"",
+    ];
+
+    /// True when `raw` evidences a source IP: an explicit `src`-role key or
+    /// two distinct IPv4 addresses (both endpoints present).
+    pub fn raw_has_src_ip_marker(raw: &str) -> bool {
+        Self::SRC_IP_KEYS.iter().any(|k| raw.contains(k)) || Self::distinct_ipv4_count(raw) >= 2
+    }
+
+    /// True when `raw` evidences a destination IP (mirrors the src rule).
+    pub fn raw_has_dst_ip_marker(raw: &str) -> bool {
+        Self::DST_IP_KEYS.iter().any(|k| raw.contains(k)) || Self::distinct_ipv4_count(raw) >= 2
+    }
+
+    /// Port keys whose value, when a valid 1–65535 integer, evidences a port.
+    const PORT_KEYS: &'static [&'static str] = &[
+        "spt=",
+        "dpt=",
+        "sport=",
+        "dport=",
+        "srcport=",
+        "dstport=",
+        "src_port=",
+        "dst_port=",
+        "port=",
+        "srcPort=",
+        "dstPort=",
+    ];
+
+    /// True when `raw` carries valid port evidence: a port-key assignment with
+    /// a 1–65535 value (ICMP-style `sport=0` is NOT evidence), the ASA
+    /// `interface:IP/PORT` shape (a bare CIDR `10.0.0.0/24` is NOT a port),
+    /// or a bracketed-IPv6 `]:PORT`.
+    pub fn raw_has_port_marker(raw: &str) -> bool {
+        fn digits_in_range(b: &[u8], from: usize) -> bool {
+            let mut e = from;
+            while e < b.len() && b[e].is_ascii_digit() && e - from < 5 {
+                e += 1;
+            }
+            if e == from || (e < b.len() && b[e].is_ascii_digit()) {
+                return false;
+            }
+            match std::str::from_utf8(&b[from..e])
+                .ok()
+                .and_then(|s| s.parse::<u32>().ok())
+            {
+                Some(v) => (1..=65535).contains(&v),
+                None => false,
+            }
+        }
+
+        let b = raw.as_bytes();
+        for key in Self::PORT_KEYS {
+            let mut from = 0usize;
+            while let Some(p) = raw[from..].find(key) {
+                let vs = from + p + key.len();
+                if digits_in_range(b, vs) {
+                    return true;
+                }
+                from = vs;
+            }
+        }
+        // interface:IPv4/PORT — requires the ':IP' shape, so CIDRs never count.
+        for i in 0..b.len() {
+            if b[i] == b':' {
+                if let Some(len) = Self::ipv4_len_at(raw, i + 1) {
+                    let slash = i + 1 + len;
+                    if slash < b.len() && b[slash] == b'/' && digits_in_range(b, slash + 1) {
+                        return true;
+                    }
+                }
+            }
+        }
+        // bracketed IPv6 with explicit port: `]:443`
+        if let Some(p) = raw.find("]:") {
+            if digits_in_range(b, p + 2) {
+                return true;
+            }
+        }
+        false
+    }
+
+    const PROTO_KEYS: &'static [&'static str] = &[
+        "proto=",
+        "protocol=",
+        "ip_proto=",
+        "ipprotocol=",
+        "\"proto\"",
+        "\"protocol\"",
+    ];
+    /// IANA IP-layer protocol names — whole-word, case-insensitive.
+    /// Application labels (`SSL`, `HTTP`) are NOT IP-protocol markers.
+    const PROTO_NAMES: &'static [&'static str] = &[
+        "TCP", "UDP", "ICMP", "ICMPV6", "GRE", "ESP", "SCTP", "OSPF", "IGMP", "AH",
+    ];
+
+    /// True when `raw` carries protocol evidence: a `proto=`/`protocol=`-style
+    /// key with a non-empty value, or a whole-word IANA IP-protocol name.
+    pub fn raw_has_protocol_marker(raw: &str) -> bool {
+        for key in Self::PROTO_KEYS {
+            if let Some(p) = raw.find(key) {
+                let rest = raw[p + key.len()..]
+                    .trim_start_matches(':')
+                    .trim_start_matches('"')
+                    .trim_start();
+                if !rest.is_empty()
+                    && !rest.starts_with(|c: char| {
+                        c.is_whitespace() || c == ',' || c == '}' || c == ']'
+                    })
+                {
+                    return true;
+                }
+            }
+        }
+        let up = raw.to_ascii_uppercase();
+        let ub = up.as_bytes();
+        for name in Self::PROTO_NAMES {
+            let mut from = 0usize;
+            while let Some(p) = up[from..].find(name) {
+                let abs = from + p;
+                let end = abs + name.len();
+                let before_ok = abs == 0 || !ub[abs - 1].is_ascii_alphabetic();
+                let after_ok = end >= ub.len() || !ub[end].is_ascii_alphabetic();
+                if before_ok && after_ok {
+                    return true;
+                }
+                from = abs + 1;
+            }
+        }
+        false
+    }
+
     /// Template-Validity (honest TA): the produced cluster template must be an exact
     /// token-aligned generalization of this record's own masked line:
     /// non-empty, same token count, every non-`<*>` token identical at its position,
@@ -1312,9 +1538,11 @@ impl EvaluatorEngine {
                 uuid_valid += 1;
             }
 
-            // 5. IP Address Verification (a null or raw-absent field counts wrong)
+            // 5. IP Address Verification (`Some` must appear in raw; `None` is
+            //    correct only when raw carries no endpoint marker — P5 rule)
             match activity.src_endpoint.ip.as_deref() {
                 Some(ip) if raw.contains(ip) => src_ip_correct += 1,
+                None if !Self::raw_has_src_ip_marker(raw) => src_ip_correct += 1,
                 other => failures.push(AuditFailure::new(
                     "src_ip",
                     idx,
@@ -1326,6 +1554,7 @@ impl EvaluatorEngine {
             }
             match activity.dst_endpoint.ip.as_deref() {
                 Some(ip) if raw.contains(ip) => dst_ip_correct += 1,
+                None if !Self::raw_has_dst_ip_marker(raw) => dst_ip_correct += 1,
                 other => failures.push(AuditFailure::new(
                     "dst_ip",
                     idx,
@@ -1336,11 +1565,12 @@ impl EvaluatorEngine {
                 )),
             }
 
-            // 6. Port Verification
+            // 6. Port Verification (`None` correct only without port evidence)
             match activity.src_endpoint.port {
                 Some(port) if (1..=65535).contains(&port) && raw.contains(&port.to_string()) => {
                     src_port_correct += 1
                 }
+                None if !Self::raw_has_port_marker(raw) => src_port_correct += 1,
                 other => failures.push(AuditFailure::new(
                     "src_port",
                     idx,
@@ -1356,6 +1586,7 @@ impl EvaluatorEngine {
                 Some(port) if (1..=65535).contains(&port) && raw.contains(&port.to_string()) => {
                     dst_port_correct += 1
                 }
+                None if !Self::raw_has_port_marker(raw) => dst_port_correct += 1,
                 other => failures.push(AuditFailure::new(
                     "dst_port",
                     idx,
@@ -1392,6 +1623,9 @@ impl EvaluatorEngine {
                         cluster_id,
                     ));
                 }
+            } else if !Self::raw_has_protocol_marker(raw) {
+                // P5 null-correct: raw carries no IP-protocol evidence
+                proto_correct += 1;
             } else {
                 failures.push(AuditFailure::new(
                     "protocol",

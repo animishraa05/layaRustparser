@@ -507,3 +507,36 @@ fn test_cef_parsing_suite() {
         hex::encode(Sha256::digest(sample_ms.as_bytes()))
     );
 }
+
+#[test]
+fn test_pfsense_icmp_ports_stay_null() {
+    let parser = UniversalParser::new();
+
+    // IPv4 ICMP filterlog: fields after the endpoint IPs are ICMP type-name
+    // and code — NOT ports. The extractor must never parse them (the P5 audit
+    // caught `Some(0)` here; a numeric ICMP type would fabricate a src_port
+    // entirely). Ports are transport-only, and 0 is never emitted (P2
+    // normalization, now applied to pfSense too).
+    let raw = "Sep 21 14:00:05 pfSense filterlog[20002]: 3,16777216,,1000000588,igb1,match,pass,out,4,0x0,,128,39331,0,none,1,icmp,84,192.168.1.157,8.8.8.8,request,0,0";
+    let event = parser.parse(raw).expect("parse pfsense icmp");
+    assert_eq!(event.connection_info.protocol_num, Some(1));
+    assert_eq!(event.src_endpoint.port, None, "ICMP carries no ports");
+    assert_eq!(event.dst_endpoint.port, None, "never Some(0) on ICMP");
+    assert_eq!(event.src_endpoint.ip.as_deref(), Some("192.168.1.157"));
+    assert_eq!(event.dst_endpoint.ip.as_deref(), Some("8.8.8.8"));
+
+    // numeric ICMP type in the same position must not become a source port
+    let raw_t = "Sep 21 14:00:05 pfSense filterlog[20003]: 3,16777216,,1000000589,igb1,match,pass,in,4,0x0,,128,39332,0,none,1,icmp,84,192.168.1.158,8.8.8.8,8,0";
+    let event = parser.parse(raw_t).expect("parse pfsense icmp type");
+    assert_eq!(
+        event.src_endpoint.port, None,
+        "ICMP type 8 must not be read as a port"
+    );
+    assert_eq!(event.dst_endpoint.port, None);
+
+    // TCP/UDP keep their ports (transport protocols have them)
+    let raw_tcp = "filterlog: 5,,,1000000103,em0,match,pass,in,4,0x0,,64,12345,0,none,6,tcp,60,192.168.1.50,203.0.113.10,54321,443,0,S,123456,,1024,,";
+    let event = parser.parse(raw_tcp).expect("parse pfsense tcp");
+    assert_eq!(event.src_endpoint.port, Some(54321));
+    assert_eq!(event.dst_endpoint.port, Some(443));
+}

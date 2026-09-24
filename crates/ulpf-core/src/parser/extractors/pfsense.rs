@@ -67,11 +67,18 @@ impl PfSenseExtractor {
             if fields.len() > 19 {
                 dst_ip = Some(fields[19].to_string());
             }
-            if fields.len() > 20 {
-                src_port = fields[20].parse::<u16>().ok();
-            }
-            if fields.len() > 21 {
-                dst_port = fields[21].parse::<u16>().ok();
+            // Ports exist only for transport protocols that have them: on ICMP
+            // (and other non-transport protos) fields[20]/[21] are ICMP
+            // type-name/code — parsing them yielded `Some(0)`, or even a
+            // fabricated port from a numeric ICMP type. P2 normalization
+            // ("never Some(0)") applies here too.
+            if matches!(proto_num, Some(6) | Some(17)) {
+                if fields.len() > 20 {
+                    src_port = fields[20].parse::<u16>().ok().filter(|p| *p != 0);
+                }
+                if fields.len() > 21 {
+                    dst_port = fields[21].parse::<u16>().ok().filter(|p| *p != 0);
+                }
             }
         } else if *ip_version == "6" {
             // IPv6 layout
@@ -89,11 +96,13 @@ impl PfSenseExtractor {
             if fields.len() > 16 {
                 dst_ip = Some(fields[16].to_string());
             }
-            if fields.len() > 17 {
-                src_port = fields[17].parse::<u16>().ok();
-            }
-            if fields.len() > 18 {
-                dst_port = fields[18].parse::<u16>().ok();
+            if matches!(proto_num, Some(6) | Some(17)) {
+                if fields.len() > 17 {
+                    src_port = fields[17].parse::<u16>().ok().filter(|p| *p != 0);
+                }
+                if fields.len() > 18 {
+                    dst_port = fields[18].parse::<u16>().ok().filter(|p| *p != 0);
+                }
             }
         }
 
