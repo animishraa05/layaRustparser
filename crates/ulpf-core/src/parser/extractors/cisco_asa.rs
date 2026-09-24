@@ -311,7 +311,22 @@ impl CiscoAsaExtractor {
         now_ms: i64,
         unmapped: HashMap<String, String>,
     ) -> anyhow::Result<NetworkActivity> {
-        let disp = if body.contains("Built") || body.contains("Teardown") {
+        // P7.2 shared verdict vocabulary — the evaluator's
+        // `extract_ground_truth` mirrors this list on the GT side; keep BOTH
+        // in lockstep. VPN/AAA fallback lines carry no Built/Deny/Teardown
+        // verb, so phrase evidence decides: failure phrases win first (a
+        // line can mention both a tunnel and a failed authentication),
+        // then success phrases, then the historical verb ladder.
+        let body_lower = body.to_ascii_lowercase();
+        let disp = if body_lower.contains("authentication failed")
+            || body_lower.contains("login failed")
+        {
+            disposition::BLOCKED
+        } else if body.contains("Built")
+            || body.contains("Teardown")
+            || body_lower.contains("successful login")
+            || body_lower.contains("tunnel established")
+        {
             disposition::ALLOWED
         } else if body.contains("Deny") || body.contains("denied") {
             disposition::BLOCKED

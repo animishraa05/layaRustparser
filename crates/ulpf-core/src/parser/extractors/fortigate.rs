@@ -160,17 +160,23 @@ impl FortigateExtractor {
             _ => now_ms,
         };
 
-        // Determine disposition and activity
+        // Determine disposition and activity. Vocabulary kept in lockstep with
+        // the evaluator's GT `action_from_kv_token` (P7 parity): every verb
+        // the GT resolves must resolve identically here or the disposition
+        // audit fails (e.g. `action="blocked"` previously fell to UNKNOWN).
         let (disp, act_id) = match action.as_deref().map(|s| s.to_ascii_lowercase()).as_deref() {
-            Some("accept") => (disposition::ALLOWED, activity_id::TRAFFIC_FLOW),
-            Some("deny") | Some("block") => (disposition::BLOCKED, activity_id::OTHER),
+            Some("accept") | Some("allow") | Some("allowed") => {
+                (disposition::ALLOWED, activity_id::TRAFFIC_FLOW)
+            }
+            Some("deny") | Some("denied") | Some("block") | Some("blocked") => {
+                (disposition::BLOCKED, activity_id::OTHER)
+            }
             Some("drop") => (disposition::DROPPED, activity_id::OTHER),
             // Session-end states of permitted traffic (OCSF: Allowed + CLOSE);
             // `timeout` was previously left to fall through to UNKNOWN, which
             // failed the evaluator's disposition check for idle-expired sessions.
-            Some("close") | Some("client-rst") | Some("server-rst") | Some("timeout") => {
-                (disposition::ALLOWED, activity_id::CLOSE)
-            }
+            Some("close") | Some("closed") | Some("client-rst") | Some("server-rst")
+            | Some("timeout") | Some("reset") => (disposition::ALLOWED, activity_id::CLOSE),
             Some("open") | Some("start") => (disposition::ALLOWED, activity_id::OPEN),
             _ => (disposition::UNKNOWN, activity_id::TRAFFIC_FLOW),
         };

@@ -540,3 +540,111 @@ fn test_pfsense_icmp_ports_stay_null() {
     assert_eq!(event.src_endpoint.port, Some(54321));
     assert_eq!(event.dst_endpoint.port, Some(443));
 }
+
+// ============================================================================
+// P7 — FORMAT EXPANSION: ASA VPN/AAA VERDICTS, PAN THREAT, PFSENSE IPV6
+// ============================================================================
+
+/// P7.2 engine half of the shared ASA VPN/AAA verdict vocabulary (the
+/// evaluator half lives in `ai_tests::test_p7_gt_tag_refinements...`):
+/// success phrases resolve to Allowed, failure phrases to Blocked — even
+/// on fallback lines with no `Built`/`Deny`/`Teardown` verb. Lines are
+/// deliberately marker-free (one IPv4, no `src=`/`proto=` keys, no
+/// transport-name tokens) so the accuracy audit sees null endpoints as
+/// correct, never fabricated evidence.
+#[test]
+fn test_p7_asa_vpn_aaa_verdict_phrases() {
+    let parser = UniversalParser::new();
+
+    let aaa_ok = "<130>Sep 21 14:04:11 asa-vpn-gw01 %ASA-6-716059: Group = vpn-users, Username = jdoe, IP = 203.0.113.51, Successful login to server.";
+    let ev = parser.parse(aaa_ok).expect("parse AAA success");
+    assert_eq!(ev.disposition, disposition::ALLOWED);
+    assert!(ev.src_endpoint.ip.is_none() && ev.dst_endpoint.ip.is_none());
+    assert!(ev.connection_info.protocol_name.is_none());
+    assert_eq!(
+        ev.metadata.raw_hash,
+        hex::encode(Sha256::digest(aaa_ok.as_bytes()))
+    );
+
+    let aaa_fail = "<164>Sep 21 14:04:12 asa-vpn-gw01 %ASA-4-716060: Group = vpn-users, Username = root, IP = 203.0.113.51, authentication failed.";
+    let ev = parser.parse(aaa_fail).expect("parse AAA failure");
+    assert_eq!(ev.disposition, disposition::BLOCKED);
+
+    let vpn_ok = "<130>Sep 21 14:03:11 asa-vpn-gw01 %ASA-6-713041: Group = vpn-users, IP = 198.51.100.77, IPsec tunnel established.";
+    let ev = parser.parse(vpn_ok).expect("parse VPN established");
+    assert_eq!(ev.disposition, disposition::ALLOWED);
+
+    // "tunnel" alone must NOT read as established — failure phrase wins.
+    let vpn_fail = "<164>Sep 21 14:03:12 asa-vpn-gw01 %ASA-4-713172: Group = vpn-users, IP = 198.51.100.77, IPsec tunnel, authentication failed from gateway.";
+    let ev = parser.parse(vpn_fail).expect("parse VPN failure");
+    assert_eq!(ev.disposition, disposition::BLOCKED);
+    assert_eq!(
+        ev.metadata.raw_hash,
+        hex::encode(Sha256::digest(vpn_fail.as_bytes()))
+    );
+}
+
+/// P7.2: PAN-OS THREAT rows parse through the same positional layout as
+/// TRAFFIC rows (type token at CSV index 3 anchors `base = 0`; action stays
+/// at index 30). Pins endpoints, ports, protocol, deny -> Blocked, and the
+/// byte-for-byte lossless contract.
+#[test]
+fn test_p7_paloalto_threat_csv() {
+    let parser = UniversalParser::new();
+    let raw = "1,2026/09/21 14:00:07,001801000099,THREAT,end,2304,2026/09/21 14:00:07,10.1.1.5,203.0.113.9,10.1.1.5,203.0.113.9,LAN_to_WAN,acme\\agarcia,,threat-scan,vsys1,LAN,WAN,ethernet1/1,ethernet1/2,default,,100412,1,49152,443,32768,443,0x400000,tcp,deny,512,256,768,4,2026/09/21 14:00:00,21,networking,0,100000155,0x0,192.168.0.0-192.168.255.255,US,0,612,8898,,0,0,0,0,vsys1,PA-5220-FW01,from-policy,,,0,0,0,,N/A,0,0,0,0";
+    let event = parser.parse(raw).expect("parse PAN THREAT row");
+
+    assert_eq!(event.metadata.product.vendor_name, "Palo Alto Networks");
+    assert_eq!(
+        event.disposition,
+        disposition::BLOCKED,
+        "action col 30 = deny"
+    );
+    assert_eq!(event.activity_id, activity_id::CLOSE, "subtype = end");
+    assert_eq!(event.src_endpoint.ip.as_deref(), Some("10.1.1.5"));
+    assert_eq!(event.src_endpoint.port, Some(49152));
+    assert_eq!(event.dst_endpoint.ip.as_deref(), Some("203.0.113.9"));
+    assert_eq!(event.dst_endpoint.port, Some(443));
+    assert_eq!(event.connection_info.protocol_name.as_deref(), Some("TCP"));
+    assert_eq!(event.connection_info.protocol_num, Some(6));
+    assert_eq!(
+        event.metadata.raw_hash,
+        hex::encode(Sha256::digest(raw.as_bytes()))
+    );
+}
+
+/// P7.2: pfSense filterlog IPv6 layout pinned against the official Netgate
+/// "Raw Filter Log Format" BNF — after the 9 common fields:
+/// `[9]=class [10]=flow-label [11]=hop-limit [12]=proto-text [13]=proto-id
+/// [14]=length [15]=src [16]=dst [17]/[18]=ports` (v6 carries TEXT before
+/// ID, the reverse of v4). This branch was previously untested.
+#[test]
+fn test_p7_pfsense_ipv6_row() {
+    let parser = UniversalParser::new();
+    let raw = "Sep 21 14:00:07 pfSense filterlog[30007]: 1000000103,16777216,,1000000455,igb2,match,pass,in,6,0x0,01a2b,64,tcp,6,1460,2001:db8::5,2001:db8:aaaa::9,51000,443,1400,PA,100001,,65535,,";
+    let event = parser.parse(raw).expect("parse pfSense IPv6 row");
+
+    assert_eq!(event.disposition, disposition::ALLOWED);
+    assert_eq!(event.activity_id, activity_id::TRAFFIC_FLOW);
+    assert_eq!(event.connection_info.protocol_name.as_deref(), Some("TCP"));
+    assert_eq!(event.connection_info.protocol_num, Some(6));
+    assert_eq!(event.connection_info.direction.as_deref(), Some("Inbound"));
+    assert_eq!(event.src_endpoint.ip.as_deref(), Some("2001:db8::5"));
+    assert_eq!(event.src_endpoint.port, Some(51000));
+    assert_eq!(event.src_endpoint.interface.as_deref(), Some("igb2"));
+    assert_eq!(event.dst_endpoint.ip.as_deref(), Some("2001:db8:aaaa::9"));
+    assert_eq!(event.dst_endpoint.port, Some(443));
+    assert_eq!(
+        event
+            .unmapped
+            .as_ref()
+            .and_then(|u| u.get("ip_version"))
+            .map(|s| s.as_str()),
+        Some("6"),
+        "layout discriminator must surface in unmapped"
+    );
+    assert_eq!(
+        event.metadata.raw_hash,
+        hex::encode(Sha256::digest(raw.as_bytes()))
+    );
+}

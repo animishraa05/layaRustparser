@@ -60,10 +60,21 @@ impl Default for DrainConfig {
                 "CLOSED".into(),
                 "RESET".into(),
                 "RST".into(),
+                // P7.2 anti-merge insurance: PAN-OS CSV rows carry their type
+                // token BARE at index 3 — TRAFFIC and THREAT are distinct
+                // classes and must never share a cluster (split-only).
+                "TRAFFIC".into(),
+                "THREAT".into(),
             ],
         }
     }
 }
+
+/// P7.2 key-aware class anchors: kv tokens whose KEY is listed here are
+/// class discriminators — the same key with a different value can never
+/// share a cluster (`type="traffic"` vs `type="dns"`), regardless of how
+/// similar the rest of the line is (sim ≈ 0.97 on same-length siblings).
+const CLASS_KEYS: &[&str] = &["type"];
 
 /// Alert severity for anomaly events
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -531,6 +542,17 @@ impl DrainMiner {
                 if is_anchor && !v1.eq_ignore_ascii_case(v2) {
                     return 0.0; // Force distinct template cluster
                 }
+                // P7.2 key-aware class partition: same CLASS_KEYS key with a
+                // different value forces a distinct cluster even when the key
+                // itself is not in the vocabulary list (kv `type=` classes).
+                if let (Some(k1), Some(k2)) = (Self::kv_key(t1), Self::kv_key(t2)) {
+                    if k1.eq_ignore_ascii_case(k2)
+                        && CLASS_KEYS.iter().any(|c| k1.eq_ignore_ascii_case(c))
+                        && !v1.eq_ignore_ascii_case(v2)
+                    {
+                        return 0.0;
+                    }
+                }
             }
         }
 
@@ -558,6 +580,22 @@ impl DrainMiner {
         value.trim_matches(|c: char| {
             c == '"' || c == '\'' || c == ',' || c == ';' || c.is_whitespace()
         })
+    }
+
+    /// Key-form of a `key=value` / `"key":"value"` token (P7.2 class-anchor
+    /// pairing); `None` for tokens without a separator. Pure slices.
+    #[inline]
+    fn kv_key(token: &str) -> Option<&str> {
+        let key = if let Some(p) = token.find('=') {
+            &token[..p]
+        } else if let Some(p) = token.find("\":") {
+            &token[..p]
+        } else {
+            return None;
+        };
+        Some(key.trim_matches(|c: char| {
+            c == '"' || c == '\'' || c == ',' || c == ';' || c.is_whitespace()
+        }))
     }
 
     /// Check if token contains digits or dynamic parameters
