@@ -12,5 +12,7 @@ pub use evaluator::{
     HardwareThroughputSummary, LatencySummary, TierDiagnosticsSummary,
 };
 pub use laya::{LayaChoice, LayaDecisionEngine, LayaNoul, LayaScore};
-pub use onboarder::{DynamicParserRegistry, Onboarder, ParserDefinition, ValidationReport};
+pub use onboarder::{
+    DynamicParserRegistry, Onboarder, ParserDefinition, ValidationReport, REGISTRY_CAPACITY,
+};
 pub use pipeline::{AsyncTriageTask, PipelineStats, TieredPipeline};

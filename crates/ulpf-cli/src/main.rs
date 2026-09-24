@@ -581,7 +581,7 @@ fn run_onboard(args: OnboardArgs) -> Result<()> {
 
     // Verify loading into dynamic registry
     let mut registry = DynamicParserRegistry::new();
-    registry.register(parser_def);
+    let _ = registry.register(parser_def);
 
     let test_event = registry.parse(&args.vendor, sample_refs[0])?;
     println!("\n\x1b[1;32m[SUCCESS] First sample normalized to OCSF 1.3:\x1b[0m");

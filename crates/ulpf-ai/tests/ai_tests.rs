@@ -231,7 +231,8 @@ fn test_dynamic_parser_registry() {
     let (parser_def, report) =
         Onboarder::generate_parser("custom_waf", "waf-v1", &samples).expect("Synthesis");
     assert!(report.passed);
-    registry.register(parser_def);
+    let key = registry.register(parser_def);
+    assert_eq!(key, "custom_waf:waf-v1", "composite vendor:model key");
 
     assert_eq!(registry.len(), 1);
 
@@ -549,5 +550,194 @@ fn test_laya_fingerprint_dominates_structural_priors() {
         choice.probability > 0.85,
         "fingerprint hit must clear the gating threshold, got {}",
         choice.probability
+    );
+}
+
+// ============================================================================
+// P3: HOT-PATH WIRING (POISONING-SAFE) — pinned order, routes, differential
+// ============================================================================
+
+/// Pinned order on Tier-1 miss: native extractor -> dynamic registry -> lossless.
+/// A registered catch-all dynamic parser must NEVER shadow a known format —
+/// native always wins for known shapes (anti-poisoning invariant).
+#[test]
+fn test_pinned_order_native_wins_over_registry() {
+    use ulpf_ai::TieredPipeline;
+
+    let pipeline = TieredPipeline::new();
+
+    // Poison: a dynamic parser registered BEFORE the native line arrives. If
+    // the registry were consulted first (or Tier-1b routed it), the product
+    // vendor would come from the dynamic parser instead of the ASA extractor.
+    let poison = ulpf_ai::ParserDefinition {
+        vendor: "poison_vendor".into(),
+        device_model: "catchall".into(),
+        regex_pattern: r"^(?P<src_ip>.+)$".to_string(),
+        action_mappings: Default::default(),
+        sample_logs: vec![],
+        confidence_score: 1.0,
+        created_at: 0,
+    };
+    {
+        let reg_arc = pipeline.dynamic_registry();
+        let mut reg = reg_arc.lock().unwrap();
+        let key = reg.register(poison);
+        assert_eq!(key, "poison_vendor:catchall");
+        assert_eq!(reg.len(), 1);
+    }
+
+    let asa_line = "%ASA-6-302013: Built outbound TCP connection 1000672 for outside:203.0.113.54/25 (203.0.113.54/25) to inside:10.1.6.180/52369 (198.51.100.209/52369)";
+    let activity = pipeline.process(asa_line);
+    assert_eq!(
+        activity.metadata.product.vendor_name, "Cisco",
+        "native extractor must win for known formats — registry never poisons them"
+    );
+    assert_eq!(
+        activity.src_endpoint.ip.as_deref(),
+        Some("203.0.113.54"),
+        "native ASA extraction must be what ran"
+    );
+}
+
+/// A successful registry parse promotes a Tier-1b route: future same-shape
+/// lines skip BOTH the Drain mutex and the full registry scan (observable:
+/// the Drain hit counter stays 0 while repeat lines keep parsing via registry).
+#[test]
+fn test_dynamic_route_promotion_skips_drain() {
+    use ulpf_ai::TieredPipeline;
+
+    let pipeline = TieredPipeline::new();
+    let samples = [
+        "WAFNOVEL edge=prod tier=web src=10.1.1.1 sport=1111 dst=10.2.2.2 dport=8443 action=allow",
+        "WAFNOVEL edge=prod tier=web src=10.1.1.2 sport=2222 dst=10.2.2.3 dport=8444 action=allow",
+        "WAFNOVEL edge=prod tier=web src=10.1.1.3 sport=3333 dst=10.2.2.4 dport=8445 action=allow",
+    ];
+
+    // Register the parser up front (as the Tier-3 worker would after onboarding).
+    let (parser_def, report) =
+        Onboarder::generate_parser("novel_waf", "wafnovel-v1", &samples).expect("Synthesis");
+    assert!(report.passed && report.match_percentage == 100.0);
+    {
+        let reg_arc = pipeline.dynamic_registry();
+        let mut reg = reg_arc.lock().unwrap();
+        let key = reg.register(parser_def);
+        assert_eq!(key, "novel_waf:wafnovel-v1");
+    }
+
+    // Line 1: native Unknown, no route yet -> Drain (new cluster, no hit
+    // count) + full registry scan + route installation.
+    let a1 = pipeline.process(samples[0]);
+    assert_eq!(
+        a1.metadata.product.vendor_name, "novel_waf",
+        "registry must parse unknown shapes"
+    );
+    assert_eq!(a1.src_endpoint.ip.as_deref(), Some("10.1.1.1"));
+
+    // Lines 2-3: promoted route -> skip Drain entirely.
+    let a2 = pipeline.process(samples[1]);
+    assert_eq!(a2.src_endpoint.ip.as_deref(), Some("10.1.1.2"));
+    let a3 = pipeline.process(samples[2]);
+    assert_eq!(a3.src_endpoint.ip.as_deref(), Some("10.1.1.3"));
+
+    let stats = pipeline.stats();
+    assert_eq!(
+        stats.tier2_drain_hits, 0,
+        "promotion route must bypass the Drain mutex for repeat unknown shapes"
+    );
+}
+
+/// Success-criterion-1 instrument: for every corpus line where the native
+/// extractor fires, baseline `UniversalParser::parse` and
+/// `TieredPipeline::process` must produce identical OCSF output modulo
+/// `event_id`/`ingest_time`. Byte-exactness beats aggregate F1 ties at
+/// catching wiring regressions.
+#[test]
+fn test_differential_baseline_vs_tiered() {
+    use std::path::Path;
+    use ulpf_ai::TieredPipeline;
+    use ulpf_core::parser::classifier::VendorFormat;
+    use ulpf_core::parser::UniversalParser;
+
+    let raw_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data/raw");
+    let files = [
+        "cisco_asa.log",
+        "fortigate.log",
+        "paloalto.log",
+        "suricata.json",
+        "pfsense.log",
+    ];
+    let mut corpus: Vec<String> = Vec::new();
+    for file_name in files {
+        let p = raw_dir.join(file_name);
+        if !p.exists() {
+            continue;
+        }
+        let text = std::fs::read_to_string(&p).expect("read corpus file");
+        for l in text.lines() {
+            let trimmed = l.trim().to_string();
+            if !trimmed.is_empty() {
+                corpus.push(trimmed);
+            }
+        }
+    }
+    assert!(!corpus.is_empty(), "corpus must exist under {:?}", raw_dir);
+
+    let baseline = UniversalParser::new();
+    let tiered = TieredPipeline::new();
+
+    /// Strip per-event identity/clock fields so only semantic OCSF content
+    /// compares. `time` joins `event_id`/`ingest_time` because extractors
+    /// without a log timestamp (ASA, pfSense) stamp it with `Utc::now()` —
+    /// two sequential parse calls land in different milliseconds. Log-derived
+    /// timestamps (Suricata/PAN/FGT) are covered by the raw-preserving field
+    /// checks; any real routing divergence still surfaces in the endpoints,
+    /// disposition, product, and unmapped fields.
+    fn normalize(a: &ulpf_core::schema::ocsf::NetworkActivity) -> serde_json::Value {
+        let mut v = serde_json::to_value(a).expect("OCSF event must serialize");
+        if let Some(obj) = v.as_object_mut() {
+            obj.remove("time");
+        }
+        if let Some(obj) = v.get_mut("metadata").and_then(|m| m.as_object_mut()) {
+            obj.remove("event_id");
+            obj.remove("ingest_time");
+        }
+        v
+    }
+
+    let mut native_firing = 0usize;
+    for line in &corpus {
+        let format = baseline.classify(line);
+        if format == VendorFormat::Unknown {
+            continue;
+        }
+        native_firing += 1;
+        match baseline.parse(line) {
+            Ok(baseline_event) => {
+                let tiered_event = tiered.process(line);
+                assert_eq!(
+                    normalize(&baseline_event),
+                    normalize(&tiered_event),
+                    "wiring divergence on native-firing line: {}",
+                    line
+                );
+            }
+            Err(_) => {
+                // Native fired but its extractor errored: both sides must land
+                // on the identical lossless fallback (modulo identity fields).
+                let baseline_event = baseline.parse_lossless(line);
+                let tiered_event = tiered.process(line);
+                assert_eq!(
+                    normalize(&baseline_event),
+                    normalize(&tiered_event),
+                    "lossless-fallback divergence on native-firing line: {}",
+                    line
+                );
+            }
+        }
+    }
+    assert!(
+        native_firing > 1000,
+        "differential must cover the native corpus (>1000 lines), got {}",
+        native_firing
     );
 }

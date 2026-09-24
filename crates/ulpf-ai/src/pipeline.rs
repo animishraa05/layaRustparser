@@ -69,6 +69,12 @@ pub struct TieredPipeline {
     /// path reads this single atomic and pays ~1 ns in the steady state (all
     /// budgets closed) instead of touching the dispatch map at all.
     exemplar_budget_open: AtomicU64,
+    /// Tier-1b promotion routes: signature hash -> registry key for shapes parsed
+    /// by a dynamic (onboarded) parser. Lets repeat lines skip the Drain mutex and
+    /// the full registry scan.
+    dynamic_routes: Arc<Mutex<HashMap<u64, String>>>,
+    /// Number of installed routes — one atomic gates the Tier-1b lock (0 = skip).
+    dynamic_routes_open: Arc<AtomicU64>,
     /// Wired Laya action/threat heads (feeds P8 adjudication metrics)
     laya_action_flags: Arc<AtomicU64>,
     laya_threat_flags: Arc<AtomicU64>,
@@ -95,6 +101,10 @@ impl TieredPipeline {
         let action_flags_ref = action_flags.clone();
         let threat_flags = Arc::new(AtomicU64::new(0));
         let threat_flags_ref = threat_flags.clone();
+        let dynamic_routes: Arc<Mutex<HashMap<u64, String>>> = Arc::new(Mutex::new(HashMap::new()));
+        let routes_ref = dynamic_routes.clone();
+        let routes_open_ref = Arc::new(AtomicU64::new(0));
+        let routes_open_for_worker = routes_open_ref.clone();
 
         // Spawn Asynchronous Tier-3 Control Plane Worker (Out-of-Band)
         let worker_handle = thread::Builder::new()
@@ -142,8 +152,17 @@ impl TieredPipeline {
                     let done = match outcome {
                         Ok((parser_def, report)) => {
                             if report.passed && report.match_percentage == 100.0 {
-                                let mut reg = registry_ref.lock().unwrap();
-                                reg.register(parser_def);
+                                let key = {
+                                    let mut reg = registry_ref.lock().unwrap();
+                                    reg.register(parser_def)
+                                };
+                                // Install the Tier-1b promotion route for this format
+                                // key so repeat lines skip Drain + registry scan.
+                                if let Ok(mut routes) = routes_ref.lock() {
+                                    if routes.insert(task.cluster_id as u64, key).is_none() {
+                                        routes_open_for_worker.fetch_add(1, Ordering::Relaxed);
+                                    }
+                                }
                                 onboarded_ref.fetch_add(1, Ordering::Relaxed);
                                 true
                             } else {
@@ -171,6 +190,8 @@ impl TieredPipeline {
             tier3_laya_onboarded: onboarded_counter,
             triage_dispatch_counts: Mutex::new(HashMap::new()),
             exemplar_budget_open: AtomicU64::new(0),
+            dynamic_routes,
+            dynamic_routes_open: routes_open_ref,
             laya_action_flags: action_flags,
             laya_threat_flags: threat_flags,
         }
@@ -200,6 +221,44 @@ impl TieredPipeline {
         }
 
         // ---------------------------------------------------------------------
+        // TIER 1b: Promoted dynamic route (onboarded unknown shapes)
+        // ---------------------------------------------------------------------
+        // Shapes the registry learned skip both the Drain mutex and the full
+        // registry scan. Gated by one atomic read: with no routes installed the
+        // Tier-1-miss path pays ~1 ns.
+        if self.dynamic_routes_open.load(Ordering::Relaxed) > 0 {
+            let route = self
+                .dynamic_routes
+                .lock()
+                .ok()
+                .and_then(|routes| routes.get(&sig_hash).cloned());
+            if let Some(key) = route {
+                // Native owns known formats: a route may never shadow them
+                // (signature-hash collisions could otherwise route a native line
+                // to a dynamic parser).
+                if self.parser.classify(raw) == VendorFormat::Unknown {
+                    let parsed = self
+                        .dynamic_registry
+                        .lock()
+                        .ok()
+                        .and_then(|mut reg| reg.parse_key(&key, raw));
+                    if let Some(activity) = parsed {
+                        return activity;
+                    }
+                    // Stale route (parser evicted by the registry bound, or the
+                    // shape drifted): drop it and fall through to Tier-2.
+                    if let Ok(mut routes) = self.dynamic_routes.lock() {
+                        if routes.remove(&sig_hash).is_some() {
+                            self.dynamic_routes_open.fetch_sub(1, Ordering::Relaxed);
+                        }
+                    }
+                }
+                // Known format: fall through to the normal Tier-2/native path;
+                // the route stays (it is valid for the shape it was learned on).
+            }
+        }
+
+        // ---------------------------------------------------------------------
         // TIER 2: Cache Miss -> DrainDotNet Clustering Engine (~10 µs)
         // ---------------------------------------------------------------------
         let cluster_res = {
@@ -215,12 +274,8 @@ impl TieredPipeline {
             // format key) so the worker can accumulate >= 3 samples and onboard.
             self.dispatch_triage_exemplar(sig_hash as usize, cluster_res.template, raw);
 
-            // Classify once and promote to Tier-1 LRU cache so subsequent events hit Tier 1
-            let format = self.parser.classify(raw);
-            if format != VendorFormat::Unknown {
-                self.parser.cache.insert(sig_hash, format);
-            }
-            return self.parse_with_format(raw, format);
+            // Pinned parse order: native → registry → lossless (promotes on success)
+            return self.parse_pinned(raw, sig_hash);
         }
 
         // ---------------------------------------------------------------------
@@ -231,7 +286,52 @@ impl TieredPipeline {
         // the same identity the Tier-1 fast path can compute without the drain lock.
         self.dispatch_triage_exemplar(sig_hash as usize, cluster_res.template, raw);
 
-        // In-band fallback: never drop logs; parse losslessly
+        // Pinned parse order on first sight too: the old path went straight to
+        // lossless here, leaving the first line of every new cluster unparsed.
+        self.parse_pinned(raw, sig_hash)
+    }
+
+    /// Pinned parse order on every Tier-1 miss:
+    /// native extractor → dynamic registry → lossless.
+    ///
+    /// Native always wins for known formats — a dynamic parser can never hijack
+    /// (poison) a shape the native classifier recognizes; the registry serves
+    /// unknown shapes only; lossless never drops a log. Successful parses
+    /// promote (native → Tier-1 LRU, dynamic → Tier-1b route) so future
+    /// same-shape lines skip the Drain mutex entirely.
+    fn parse_pinned(&self, raw: &str, sig_hash: u64) -> NetworkActivity {
+        // 1. Native extractor — known formats never reach the registry
+        let format = self.parser.classify(raw);
+        if format != VendorFormat::Unknown {
+            return match self.parser.parse_with_format(raw, format) {
+                Ok(activity) => {
+                    // LRU promotion: future same-shape lines hit Tier-1 directly
+                    self.parser.cache.insert(sig_hash, format);
+                    activity
+                }
+                // Native owns known formats even when its extractor errs —
+                // fall to lossless, never to a dynamic parser.
+                Err(_) => self.parser.parse_lossless(raw),
+            };
+        }
+
+        // 2. Dynamic registry — unknown shapes only (pinned order, full scan)
+        let registry_hit = self
+            .dynamic_registry
+            .lock()
+            .ok()
+            .and_then(|mut reg| reg.parse_any_keyed(raw));
+        if let Some((key, activity)) = registry_hit {
+            // Promotion: future same-shape lines skip Drain + the registry scan
+            if let Ok(mut routes) = self.dynamic_routes.lock() {
+                if routes.insert(sig_hash, key).is_none() {
+                    self.dynamic_routes_open.fetch_add(1, Ordering::Relaxed);
+                }
+            }
+            return activity;
+        }
+
+        // 3. Lossless fallback — never drop a log
         self.parser.parse_lossless(raw)
     }
 

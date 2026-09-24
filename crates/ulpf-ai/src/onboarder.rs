@@ -3,7 +3,7 @@ use chrono::Utc;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::net::IpAddr;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -169,7 +169,12 @@ impl ParserDefinition {
                 self.regex_pattern
             )
         })?;
+        self.parse_with_regex(&compiled_re, raw)
+    }
 
+    /// Parse with a pre-compiled regex (the registry compiles once at register
+    /// time — recompiling inside `parse_any`'s candidate loop would be O(n) Regex::new).
+    pub fn parse_with_regex(&self, compiled_re: &Regex, raw: &str) -> Result<NetworkActivity> {
         let caps = compiled_re.captures(raw).ok_or_else(|| {
             anyhow!(
                 "Log did not match dynamic parser pattern for vendor '{}': {}",
@@ -767,56 +772,136 @@ impl Onboarder {
     }
 }
 
-/// Dynamic Parser Registry allowing hot registration and loading without recompilation
+/// Registry bound: hard capacity so dynamic regex memory can never grow without limit.
+/// Eviction is LRU by last-use (registration counts as a use; ties broken by key for
+/// full determinism — no randomness anywhere in the air-gapped hot path).
+pub const REGISTRY_CAPACITY: usize = 256;
+
+/// One registered dynamic parser: definition + regex compiled exactly once + LRU stamp.
+struct RegistryEntry {
+    parser: Arc<ParserDefinition>,
+    /// `None` only if the stored pattern failed to compile (parse then errors, as before).
+    regex: Option<Regex>,
+    last_use: u64,
+}
+
+/// Dynamic Parser Registry allowing hot registration and loading without recompilation.
+/// Bounded (REGISTRY_CAPACITY) with LRU eviction and deterministic (BTreeMap) iteration
+/// order, so `parse_any` always picks the same winner among overlapping parsers.
 pub struct DynamicParserRegistry {
-    parsers: HashMap<String, Arc<ParserDefinition>>,
+    /// key = `vendor:device_model` (unique per onboarded cluster; bare vendor keys would
+    /// silently overwrite earlier clusters of the same vendor)
+    parsers: BTreeMap<String, RegistryEntry>,
+    clock: u64,
+    capacity: usize,
 }
 
 impl DynamicParserRegistry {
     pub fn new() -> Self {
         Self {
-            parsers: HashMap::new(),
+            parsers: BTreeMap::new(),
+            clock: 0,
+            capacity: REGISTRY_CAPACITY,
         }
     }
 
-    /// Register a new parser definition dynamically
-    pub fn register(&mut self, parser: ParserDefinition) {
-        let key = parser.vendor.to_lowercase();
-        self.parsers.insert(key, Arc::new(parser));
+    fn tick(&mut self) -> u64 {
+        self.clock += 1;
+        self.clock
+    }
+
+    /// Register a new parser definition dynamically. Returns the registry key
+    /// (`vendor:device_model`) so callers can install a Tier-1 promotion route.
+    #[must_use = "the registry key is needed to install a promotion route"]
+    pub fn register(&mut self, parser: ParserDefinition) -> String {
+        let key = format!("{}:{}", parser.vendor.to_lowercase(), parser.device_model);
+        let regex = Regex::new(&parser.regex_pattern).ok();
+        let now = self.tick();
+        if !self.parsers.contains_key(&key) && self.parsers.len() >= self.capacity {
+            // LRU evict: least recently used, ties broken by lexicographically
+            // smallest key — deterministic, no unbounded regex memory.
+            if let Some(evict_key) = self
+                .parsers
+                .iter()
+                .min_by(|a, b| (a.1.last_use, a.0).cmp(&(b.1.last_use, b.0)))
+                .map(|(k, _)| k.clone())
+            {
+                self.parsers.remove(&evict_key);
+            }
+        }
+        self.parsers.insert(
+            key.clone(),
+            RegistryEntry {
+                parser: Arc::new(parser),
+                regex,
+                last_use: now,
+            },
+        );
+        key
     }
 
     /// Load and register parser directly from JSON
     pub fn load_from_json(&mut self, json_str: &str) -> Result<()> {
         let def = ParserDefinition::from_json(json_str)?;
-        self.register(def);
+        let _ = self.register(def);
         Ok(())
     }
 
     /// Load and register parser directly from YAML
     pub fn load_from_yaml(&mut self, yaml_str: &str) -> Result<()> {
         let def = ParserDefinition::from_yaml(yaml_str)?;
-        self.register(def);
+        let _ = self.register(def);
         Ok(())
     }
 
-    /// Parse a log line with a registered dynamic parser
-    pub fn parse(&self, vendor: &str, raw: &str) -> Result<NetworkActivity> {
-        let key = vendor.to_lowercase();
-        let parser = self
-            .parsers
-            .get(&key)
-            .ok_or_else(|| anyhow!("No dynamic parser registered for vendor '{}'", vendor))?;
-        parser.parse(raw)
+    /// Parse a log line with a registered dynamic parser. Lookup is by exact key
+    /// first, then by `vendor:` prefix (composite keys) — first match in
+    /// lexicographic order, so results are deterministic.
+    pub fn parse(&mut self, vendor: &str, raw: &str) -> Result<NetworkActivity> {
+        let vendor_key = vendor.to_lowercase();
+        let prefix = format!("{}:", vendor_key);
+        let key = if self.parsers.contains_key(&vendor_key) {
+            vendor_key
+        } else {
+            self.parsers
+                .keys()
+                .find(|k| k.starts_with(&prefix))
+                .cloned()
+                .ok_or_else(|| anyhow!("No dynamic parser registered for vendor '{}'", vendor))?
+        };
+        self.parse_key(&key, raw)
+            .ok_or_else(|| anyhow!("Log did not match dynamic parser '{}'", key))
     }
 
-    /// Attempt to parse a log line with any registered dynamic parser
-    pub fn parse_any(&self, raw: &str) -> Option<NetworkActivity> {
-        for parser in self.parsers.values() {
-            if let Ok(activity) = parser.parse(raw) {
-                return Some(activity);
+    /// Parse with an exact registry key (Tier-1 dynamic route). Returns `None` when
+    /// the key was evicted or the line no longer matches its pattern.
+    pub fn parse_key(&mut self, key: &str, raw: &str) -> Option<NetworkActivity> {
+        let now = self.tick();
+        let entry = self.parsers.get_mut(key)?;
+        entry.last_use = now;
+        let re = entry.regex.as_ref()?;
+        entry.parser.parse_with_regex(re, raw).ok()
+    }
+
+    /// Attempt to parse a log line with any registered dynamic parser.
+    /// Returns the winning key alongside the event so callers can install a
+    /// promotion route; iteration order (BTreeMap) is deterministic.
+    pub fn parse_any_keyed(&mut self, raw: &str) -> Option<(String, NetworkActivity)> {
+        let now = self.tick();
+        for (key, entry) in self.parsers.iter_mut() {
+            if let (true, Some(re)) = (entry.regex.is_some(), entry.regex.as_ref()) {
+                if let Ok(activity) = entry.parser.parse_with_regex(re, raw) {
+                    entry.last_use = now;
+                    return Some((key.clone(), activity));
+                }
             }
         }
         None
+    }
+
+    /// Attempt to parse a log line with any registered dynamic parser
+    pub fn parse_any(&mut self, raw: &str) -> Option<NetworkActivity> {
+        self.parse_any_keyed(raw).map(|(_, activity)| activity)
     }
 
     pub fn len(&self) -> usize {
@@ -937,5 +1022,53 @@ mod tests {
         let report = Onboarder::validate_parser(&parser, &samples).unwrap();
         assert!(report.passed, "IPv6 must pass: {:?}", report.errors);
         assert_eq!(report.match_percentage, 100.0);
+    }
+
+    /// Registry is bounded (REGISTRY_CAPACITY) with LRU-by-last-use eviction and
+    /// deterministic tie-breaking — no unbounded regex memory on the hot path.
+    #[test]
+    fn test_registry_capacity_bound_and_lru_eviction() {
+        let mut reg = DynamicParserRegistry::new();
+        let mk = |model: &str| ParserDefinition {
+            vendor: "vendor".into(),
+            device_model: model.into(),
+            regex_pattern: r"^line (?P<src_port>\d+)$".to_string(),
+            action_mappings: HashMap::new(),
+            sample_logs: vec![],
+            confidence_score: 1.0,
+            created_at: 0,
+        };
+
+        for i in 0..REGISTRY_CAPACITY {
+            let key = reg.register(mk(&format!("m-{i:04}")));
+            assert_eq!(
+                key,
+                format!("vendor:m-{i:04}"),
+                "composite vendor:model key"
+            );
+        }
+        assert_eq!(reg.len(), REGISTRY_CAPACITY);
+
+        // Touch the lexicographically-first entry: it must become the most
+        // recently used and survive the next eviction.
+        let first_key = format!("vendor:m-{:04}", 0);
+        assert!(reg.parse_key(&first_key, "line 443").is_some());
+
+        // Over capacity -> exactly one (least recently used) entry evicted.
+        let new_key = reg.register(mk("m-new"));
+        assert_eq!(new_key, "vendor:m-new");
+        assert_eq!(reg.len(), REGISTRY_CAPACITY, "bound must hold");
+        assert!(
+            reg.parse_key(&first_key, "line 443").is_some(),
+            "recently-used entry must survive LRU eviction"
+        );
+        // The stalest untouched entry (m-0001; m-0000 was touched) was evicted.
+        assert!(
+            reg.parse_key("vendor:m-0001", "line 80").is_none(),
+            "stalest entry must be evicted"
+        );
+        // Vendor-prefixed lookup stays deterministic (lexicographic first match).
+        assert!(reg.parse("vendor", "line 443").is_ok());
+        assert_eq!(reg.len(), REGISTRY_CAPACITY);
     }
 }

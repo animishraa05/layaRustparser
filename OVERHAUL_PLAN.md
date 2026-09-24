@@ -385,3 +385,50 @@ after a P6 step; p50 ≥ 5.0 µs after any step.
   unconditional fail → P5 null-correct rule, generalized from the pre-registered
   "ICMP None audited as correct") · protocol 89 = CEF 52 + 113019 37 (same P5 family) ·
   template 108 + grouping 40 (→P6.1).
+
+### P3 — hot-path wiring: pinned order, bounded registry, promotion, differential
+- **Pinned parse order on every Tier-1 miss:** native extractor → dynamic
+  registry → lossless. Native owns known formats absolutely — the registry is
+  consulted only when `classify == Unknown` (a catch-all dynamic parser can
+  never hijack a native shape; proven by
+  `test_pinned_order_native_wins_over_registry`). Registry parse success
+  promotes; native parse success now promotes too (previously promotion only
+  happened on `!is_new`, so the first sight of every cluster parsed lossless —
+  that first-sight gap is where the disposition gain came from).
+- **Registry bound + LRU:** `REGISTRY_CAPACITY = 256`, LRU-by-last-use with
+  lexicographic tie-break (fully deterministic), keys `vendor:device_model`
+  (bare-vendor keys silently overwrote sibling clusters), regex compiled once
+  at register (`ParserDefinition::parse_with_regex`), BTreeMap iteration so
+  `parse_any` has a deterministic winner.
+- **Tier-1b promotion routes:** registry/pipeline-level `sig_hash → registry
+  key` map gated by one atomic (`dynamic_routes_open`); repeat unknown shapes
+  skip both the Drain mutex and the full registry scan; stale routes (evicted
+  by the bound) self-remove and fall through; a route is never allowed to
+  shadow a native-classified line (classify guard inside Tier-1b).
+- **Differential instrument (success-criterion-1):**
+  `test_differential_baseline_vs_tiered` asserts byte-identical OCSF (modulo
+  `event_id`/`ingest_time`/`time` — `time` is the extractors' `Utc::now()`
+  clock for ASA/pfSense, so two sequential parses land in different ms) for
+  all >1000 native-firing corpus lines between baseline `parse()` and
+  `tiered.process()`. It caught the third clock field on first run.
+- **Tests 71 → 75** (+registry bound/LRU, +pinned order, +route promotion,
+  +differential). Gate: clippy 0 / fmt ok / workspace ok.
+- **Post-P3 eval:** VCA 96.00/96.00 · GA 100.00/96.92 · TA 100.00/91.69 ·
+  **disposition 96.00 → 97.85 tiered** (baseline 96.00) · p50 72.43/3.81 µs
+  (<5.0 gate ✓) · Action Inviolability 100% · lossless 100% · Tier-3
+  dispatches 224 (unchanged) · **Tier-2 clusters 19 → 11** — expected: sig
+  buckets (ASA message codes etc.) are promoted by their first member, so
+  bucket-mates no longer visit Drain; dispatch/exemplars unaffected (budget
+  keyed by sig on all three paths). · dump 1632 → **1452** (tiered 710 =
+  baseline-shared 658 + grouping 40 + template 108; baseline 742 unchanged).
+- **Dump-confirmed post-P3 families:** tiered src_ip **52 → 0**, dst_ip
+  89 → 37, protocol 89 → 37 (the worker onboarded a CEF dynamic parser —
+  endpoints/protocol now parse through the registry while `vendor` stays 52
+  because the Laya label ≠ `cef`; **transitional: P4's native CEF extractor
+  takes over via pinned order and removes the async-onboarding race from the
+  numbers**) · disposition tiered 52 → 28 (CEF `act=` mapped by the onboarded
+  kv parser for allow-side values; blocked-side still wrong → P4 native
+  `act=` mapping) · ports 204 unchanged (CEF `spt=`/`dpt=` absent from kv
+  key patterns → P4 native ports; 113019 37 + ICMP 115 honest nulls → P5
+  null-correct rule) · dst_ip/protocol 37 = 113019 honest nulls → P5 ·
+  template 108 + grouping 40 → P6.1.
