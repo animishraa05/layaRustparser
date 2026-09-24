@@ -377,7 +377,7 @@ after a P6 step; p50 ≥ 5.0 µs after any step.
 - **Post-P2 eval (release, all engines, 1300 records):** VCA 96.00/96.00 · GA
   100.00/96.92 · TA 100.00/91.69 · **disposition 93.15 → 96.00/96.00** (+37 113019, both
   engines share the extractor) · src_ip dump-failures 89 → 52 (CEF only, →P4) ·
-  p50 67.75/3.45 µs (tiered gate <5.0 ✓) · LRU 95.99% (gate >90 ✓) · Action Inviolability
+  p50 67.75/3.45 µs (tiered gate <5.0 pass) · LRU 95.99% (gate >90 pass) · Action Inviolability
   100% · lossless 100% · Tier-2 clusters 19 · Tier-3 dispatches 224 · dump 1780 → **1632**
   (exact predicted −148 = (src_ip 37 + disposition 37)×2 engines).
 - **Remaining dump families:** vendor 52 (CEF→P4) · dst_ip 89 = CEF 52 + 113019 37 ·
@@ -415,7 +415,7 @@ after a P6 step; p50 ≥ 5.0 µs after any step.
   +differential). Gate: clippy 0 / fmt ok / workspace ok.
 - **Post-P3 eval:** VCA 96.00/96.00 · GA 100.00/96.92 · TA 100.00/91.69 ·
   **disposition 96.00 → 97.85 tiered** (baseline 96.00) · p50 72.43/3.81 µs
-  (<5.0 gate ✓) · Action Inviolability 100% · lossless 100% · Tier-3
+  (<5.0 gate pass) · Action Inviolability 100% · lossless 100% · Tier-3
   dispatches 224 (unchanged) · **Tier-2 clusters 19 → 11** — expected: sig
   buckets (ASA message codes etc.) are promoted by their first member, so
   bucket-mates no longer visit Drain; dispatch/exemplars unaffected (budget
@@ -461,7 +461,7 @@ after a P6 step; p50 ≥ 5.0 µs after any step.
 - **Post-P4 eval:** **VCA 96.00 → 100.00 / 100.00** · **disposition
   96.00/97.85 → 100.00 / 100.00** (async-onboarding race eliminated — CEF is
   now native, deterministic) · GA 100.00/96.92 · TA 100.00/91.69 (unchanged →
-  P6.1) · p50 76.74/3.69 µs (<5.0 ✓) · p99.9 184.11/14.54 µs · Action
+  P6.1) · p50 76.74/3.69 µs (<5.0 pass) · p99.9 184.11/14.54 µs · Action
   Inviolability 100% · lossless 100% · Tier-3 dispatches 224 → 96 (CEF no
   longer floods novel-cluster dispatch — first sight is now promoted native) ·
   Tier-2 clusters 11 · dump 1452 → **904**.
@@ -497,7 +497,7 @@ after a P6 step; p50 ≥ 5.0 µs after any step.
   clippy 0 / fmt ok / workspace green (flaky sub-µs benchmark re-ran alone per
   AGENTS.md).
 - **Post-P5 eval:** VCA 100.00/100.00 · GA 100.00/96.92 · TA 100.00/91.69 ·
-  disposition 100.00/100.00 · p50 76.91/3.73 µs (<5.0 ✓) · Action
+  disposition 100.00/100.00 · p50 76.91/3.73 µs (<5.0 pass) · Action
   Inviolability 100% · lossless 100% · Tier-3 dispatches 96 · Tier-2 clusters
   11 · **dump 904 → 148: every field-audit family (src/dst ip, ports,
   protocol) = 0 on both engines** — only tiered `template` 108 + `grouping`
@@ -535,7 +535,7 @@ after a P6 step; p50 ≥ 5.0 µs after any step.
   and `syslog_tag_of` pinning (ASA → `Some(tag)`, kv → `None`).
 - **Post-P6.1 eval:** VCA 100.00/100.00 · **GA 100.00/100.00** ·
   **TA 100.00/100.00** · disposition 100.00/100.00 · field F1 100.00/100.00 ·
-  p50 74.09/3.59 µs (<5.0 ✓) · Action Inviolability 100% PRESERVED ·
+  p50 74.09/3.59 µs (<5.0 pass) · Action Inviolability 100% PRESERVED ·
   lossless 100% · LRU hit 100.00% · Tier-3 dispatches 96 · Tier-2 clusters
   11 → **12** (one tag-driven split, as predicted) · unique templates
   1081 vs **55** (19.7× compression, strict < at equal GA=100) ·
@@ -548,9 +548,9 @@ after a P6 step; p50 ≥ 5.0 µs after any step.
   label synced in `evaluator.rs`. GA `≥`, template-count strict `<`, and
   oracle-ceiling clauses all stand and are met (GA 100 = 100; 55 < 1081;
   oracle 100).
-- **Success-bar status after P6.1:** criterion 1 ✓ (differential
-  byte-identical + F1 ≥), 2 ✓, 3 ✓ (p50 3.59 µs, delta reported), 4 ✓
-  (96 dispatches), 6 ✓ — criterion 5 (three-column scorecard + frozen
+- **Success-bar status after P6.1:** criterion 1 pass (differential
+  byte-identical + F1 ≥), 2 pass, 3 pass (p50 3.59 µs, delta reported), 4 pass
+  (96 dispatches), 6 pass — criterion 5 (three-column scorecard + frozen
   holdout) remains for P7/P8.
 - **Tests 84 → 85** (`test_drain_syslog_message_code_anchors`; kv section
   added to the existing anchor test). Gate: clippy 0 / fmt ok / workspace
@@ -593,7 +593,7 @@ after a P6 step; p50 ≥ 5.0 µs after any step.
   `corpus_kind` + 1b robustness scorecard in `to_markdown`.
 - **Core eval (1720 lines):** **dump 0** · GA/TA/VCA/disposition/F1
   **100.00/100.00 both engines** · Action Inviolability 100% · lossless
-  100% · recognized/no-panic 1720/1720 · p50 76.80/3.47 µs (<5.0 ✓;
+  100% · recognized/no-panic 1720/1720 · p50 76.80/3.47 µs (<5.0 pass;
   cool-state reruns 2.93–3.47 µs tiered — an initial 45 µs reading was
   post-build CPU contention, disproved by isolated reruns 3.05/3.44) ·
   Tier-2 clusters 12 → 18 · unique templates **1407 vs 73** (19.3×,
@@ -615,7 +615,7 @@ after a P6 step; p50 ≥ 5.0 µs after any step.
   RED `Unknown → Allowed` on ASA phrases; PAN/pfSense format tests were
   GREEN immediately — engine already correct per spec). GREEN: 6 ai_tests
   + 3 parser_tests.
-- **Success-bar status after P7:** criteria 1–4 and 6 ✓ — criterion 5
+- **Success-bar status after P7:** criteria 1–4 and 6 pass — criterion 5
   (three-column scorecard + frozen holdout) remains for P8.
 - **Tests 85 → 94** (93 passed + 1 `#[ignore]` frozen holdout). Gate:
   clippy 0 / fmt ok / workspace green; the C2 snapshot state was
@@ -654,7 +654,7 @@ required to be 100, per the P7 gate.
 **both** engines — never faked.
 § Every holdout line misses the LRU by design (novelty corpus), so
 Tier-2/Tier-3 paths dominate; the p50 < 5.0 µs gate is defined on the
-core corpus (3.16 ✓). Baseline sits at 74–77 µs everywhere.
+core corpus (3.16 pass). Baseline sits at 74–77 µs everywhere.
 Robustness/1b sections render in all three reports (`corpus_kind`
 header correct); core stays dump 0 throughout.
 
@@ -712,7 +712,7 @@ header correct); core stays dump 0 throughout.
    their remaining tests against the post-merge engine.
 9. `AGENTS.md` — keep this track's handbook (operative verification gate).
 
-**Success-bar status after P8: criteria 1–6 all ✓.** Overhaul plan
+**Success-bar status after P8: criteria 1–6 all pass.** Overhaul plan
 P1–P8 complete: gate clippy 0 / fmt ok / 94 tests (93 + 1 holdout
 executed once at freeze), core dump 0, Action Inviolability 100% on
 every corpus, three-column scorecard above.
