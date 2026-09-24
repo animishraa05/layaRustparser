@@ -1,180 +1,70 @@
-# ULPF Agent & Developer Handbook (AGENTS.md)
+# AGENTS.md — ULPF (Universal Log Pre-processing Framework)
 
-Welcome to the **Universal Log Pre-processing Framework (ULPF)** agent handbook. This document serves as the authoritative operational, architectural, and development manual for autonomous AI coding agents, pair programmers, and human systems engineers working on this repository.
+Compact agent handbook for this Rust workspace. `README.md` and `docs/` have full docs — but **some README CLI examples are stale, trust `ulpf --help`** (see Gotchas). There is **no CI, no pre-commit, no typecheck config**: the verification gate below is the only automated check.
 
----
+## Non-negotiable invariants
 
-## 1. Project Philosophy & System Invariants
+1. **Air-gapped:** zero runtime network calls (no external APIs, telemetry, model downloads). Release binary stays **< 35 MB** (currently ~18 MB).
+2. **Lossless provenance:** the raw log line is preserved byte-for-byte in storage (`raw_log` column), `raw_hash` = SHA-256(raw), event IDs are UUIDv7. Never truncate or re-encode raw input.
+3. **Action inviolability:** security actions (`ALLOW`/`PERMIT`/`ACCEPT` vs `DENY`/`DROP`/`BLOCK`/`REJECT`) must never merge into one template cluster. Anchor tokens are enforced in `crates/ulpf-ai/src/drain.rs` and tested in `crates/ulpf-ai/tests/ai_tests.rs::test_drain_unique_event_patterns_anchor_tokens`.
+4. **Zero-copy hot path:** parsing/ingestion uses `&[u8]`/`&str` slices; no `to_string()`/`format!`/`String::from` on per-packet paths.
+5. **Tier-3 stays out-of-band:** novel-cluster triage runs over bounded `crossbeam-channel`s and must never block line-rate ingest.
 
-ULPF is designed specifically for sovereign cyber defence and intelligence operations under the **National Technical Research Organisation (NTRO)** / **Smart India Hackathon (SIH26156)** problem statement. Every contribution, refactoring, or extension **MUST** strictly adhere to the following non-negotiable architectural invariants:
+## Crate map
 
-1. **Strict Air-Gapped Deployment Invariant:**
-   * ULPF must run in 100% physically isolated, disconnected environments.
-   * **Zero external runtime network dependencies.** No calls to remote APIs, Hugging Face, OpenAI, or external cloud telemetry.
-   * Total standalone release binary size must remain **< 35 MB**.
-2. **Zero-Copy Byte Slicing on Hot Path:**
-   * The ingestion and parsing hot paths must avoid heap allocations (`String::from`, `.to_string()`, or `format!`) whenever processing packet streams.
-   * Raw syslog streams are parsed using byte slices (`&[u8]`) and string slices (`&str`) borrowing directly from the pre-allocated packet buffer.
-3. **Lossless Forensic Provenance:**
-   * The original raw log line must be preserved **100% byte-for-byte uncompressed** in the normalized event metadata (`raw_data`).
-   * The cryptographic `raw_hash` must be calculated as $\text{SHA-256}(\text{raw\_data})$ and matched for RFC 6962 Merkle tree batching.
-   * All normalized events must be assigned a monotonically increasing **UUIDv7** time-ordered identifier.
-4. **Action Inviolability Invariant:**
-   * Perimeter security firewall actions (`ALLOW`, `PERMIT`, `ACCEPT` vs. `DENY`, `DROP`, `BLOCK`, `REJECT`) must **NEVER** be blended into the same template cluster during structural mining.
-   * DrainDotNet anchor tokens (`UniqueEventPatterns`) enforce this separation deterministically.
-5. **Decoupled Asynchronous Control Plane:**
-   * Complex heuristic or local SLM processing (Tier-3 Laya System 1 Decision Engine) must run strictly **out-of-band** across non-blocking bounded channels (`crossbeam-channel`).
-   * Line-rate ingestion (> 1.70M EPS) must never be blocked or degraded by novel cluster triage.
+Workspace of 5 crates (root `Cargo.toml`, edition 2021, no pinned toolchain — built on stable 1.96):
 
----
+| Crate | Role |
+| :--- | :--- |
+| `crates/ulpf-core` | Sockets, Aho-Corasick `Classifier`, zero-copy vendor extractors, OCSF schema, `SignatureLruCache` |
+| `crates/ulpf-integrity` | RFC 6962 Merkle tree, dual-trigger batcher (1,000 events / 2,000 ms), Parquet writer, tamper verifier |
+| `crates/ulpf-ai` | `DrainMiner`, `LayaDecisionEngine`, `Onboarder`, `TieredPipeline` (3-tier), `EvaluatorEngine` |
+| `crates/ulpf-generator` | Traffic blaster binary `ulpf-generator` |
+| `crates/ulpf-cli` | Binary `ulpf`; subcommands: `ingest`, `verify`, `onboard`, `benchmark`, `evaluate`, `inspect`, `tamper` |
 
-## 2. System Architecture & Multi-Tier Control Flow
+Real entrypoints: `crates/ulpf-cli/src/main.rs`, `crates/ulpf-generator/src/main.rs`. Key wiring: `ulpf-ai/src/pipeline.rs` (Tier1 LRU → Tier2 Drain → Tier3 Laya), `ulpf-core/src/parser/mod.rs` (baseline `UniversalParser`), `ulpf-integrity/src/storage.rs` (Arrow schema: `event_id, block_id, leaf_index, timestamp, vendor, raw_log, raw_hash, ocsf_json`).
 
-```mermaid
-flowchart TD
-    subgraph Ingestion["Ingestion Plane (crates/ulpf-core)"]
-        Syslog["Syslog Traffic Stream (UDP/TCP: 5140)"] --> SocketPool["Asynchronous Socket Pool (Tokio + SO_REUSEPORT)"]
-        SocketPool --> RawBuf["Lossless Zero-Copy Packet Buffer"]
-    end
+## Commands (all verified locally)
 
-    subgraph DataPlane["Data Plane: 3-Tier Parsing Pipeline (crates/ulpf-core & crates/ulpf-ai)"]
-        RawBuf --> SigHash["64-bit Non-Cryptographic Signature Hash"]
-        SigHash --> Tier1{"Tier 1: Lock-Free LRU Cache<br/>(Hit Rate: ~96% | 1.30 µs)"}
-        
-        Tier1 -- "HIT (Fast Path)" --> FastExtract["Zero-Copy Direct Extractor & OCSF 1.3 Normalize"]
-        Tier1 -- "MISS (4%)" --> Tier2["Tier 2: DrainDotNet Engine<br/>(Prefix Tree Depth 4 + Anchor Tokens)"]
-        
-        Tier2 --> ClusterCheck{"Matched Known Cluster?"}
-        ClusterCheck -- "YES" --> PromoteLRU["Promote Pattern to SignatureLruCache"]
-        PromoteLRU --> FastExtract
-        
-        ClusterCheck -- "NO: New Template" --> Dedupe{"Guardrail 1: Exemplar Deduplication<br/>(100% AI Deduplication)"}
-        Dedupe -- "Recurring Cluster Logs" --> FallbackNormalize["In-Band Default Parser"]
-        Dedupe -- "1st Exemplar Only" --> RingBuffer["Guardrail 2: Bounded Ring-Buffer<br/>(Crossbeam Bounded Channel)"]
-    end
-
-    subgraph ControlPlane["Tier 3: Asynchronous Control Plane (crates/ulpf-ai)"]
-        RingBuffer --> Laya["Laya System 1 Decision Engine<br/>(Vendor & Action Disambiguation)"]
-        Laya --> Gating{"Guardrail 3: Calibrated Confidence<br/>(Score >= 0.85?)"}
-        Gating -- "YES: High Confidence" --> Onboarder["Air-Gapped Regex Synthesizer + Register Dynamic Parser"]
-        Gating -- "NO: Low Confidence" --> Alert["Generate Human-in-the-Loop Audit Alert"]
-    end
-
-    subgraph IntegrityPlane["Integrity & Storage Plane (crates/ulpf-integrity)"]
-        FastExtract --> Batcher["Dual-Trigger Batcher (1,000 logs / 2,000 ms)"]
-        FallbackNormalize --> Batcher
-        Batcher --> Merkle["RFC 6962 Merkle Tree Generator"]
-        Merkle --> Ledger["Append-Only Ledger (data/ledger.jsonl)"]
-        Merkle --> Parquet["Columnar Apache Parquet WORM Storage (data/parquet/)"]
-    end
-```
-
----
-
-## 3. Subagent Archetypes & Team Workflow
-
-During ULPF engineering, tasks are delegated to specialized autonomous subagents. When invoking subagents via `invoke_subagent`, adopt the following roles:
-
-| Subagent Role | Target Crate / Path | Core Responsibility |
-| :--- | :--- | :--- |
-| **Dataset Harvester & Blaster** | [`crates/ulpf-generator`](crates/ulpf-generator) | Generates high-volume synthetic and RFC-compliant Syslog traffic (10k to 500k EPS) across Cisco, FortiGate, PAN-OS, Suricata, pfSense, and Kaggle firewall datasets. |
-| **Data Plane & Parser Engine** | [`crates/ulpf-core`](crates/ulpf-core) | Implements asynchronous socket listeners, zero-copy Aho-Corasick classifiers, vendor token extractors, and OCSF 1.3 `NetworkActivity` schema normalization. |
-| **Integrity Plane & Merkle Storage** | [`crates/ulpf-integrity`](crates/ulpf-integrity) | Builds RFC 6962 Certificate Transparency Merkle trees, dual-trigger batchers, columnar Apache Parquet writers/readers, and forensic bit-flip tamper auditors. |
-| **Air-Gapped AI & Anomaly Clustering** | [`crates/ulpf-ai`](crates/ulpf-ai) | Maintains the DrainDotNet prefix tree template miner, out-of-band Laya System 1 decision engine, 1-click dynamic parser generator, and 3-tier pipeline. |
-| **Architectural Evaluator & Telemetry Suite** | [`crates/ulpf-cli`](crates/ulpf-cli) / [`evaluator.rs`](crates/ulpf-ai/src/evaluator.rs) | Executes microsecond latency percentile sampling ($p_1 \dots p_{99.99}$), throughput benchmarks, and Loghub academic accuracy audits. |
-
----
-
-## 4. Key Symbols, Structs & Codebase Index
-
-Agents should refer to these core symbols when modifying or extending ULPF:
-
-### Core Data Plane ([`crates/ulpf-core`](crates/ulpf-core))
-* [`UniversalParser`](crates/ulpf-core/src/parser/mod.rs): Unified classifier, cached parser, and multi-vendor normalization engine.
-* [`SignatureLruCache`](crates/ulpf-core/src/parser/lru_cache.rs): High-speed lock-free LRU cache using 64-bit structural signature hashing.
-* [`Classifier`](crates/ulpf-core/src/parser/classifier.rs): Sub-microsecond Aho-Corasick multi-pattern automaton for vendor format identification.
-* [`NetworkActivity`](crates/ulpf-core/src/schema/ocsf.rs): Standard OCSF 1.3 Class UID 4001 event representation.
-* [`SocketIngest`](crates/ulpf-core/src/ingest/socket.rs): Async UDP/TCP socket listener supporting `SO_REUSEPORT` multi-core socket reuse.
-
-### AI & Template Mining ([`crates/ulpf-ai`](crates/ulpf-ai))
-* [`TieredPipeline`](crates/ulpf-ai/src/pipeline.rs): Orchestrates the 3-tier pipeline (`LRU` $\to$ `DrainDotNet` $\to$ `Laya`).
-* [`DrainMiner`](crates/ulpf-ai/src/drain.rs): Fixed-depth ($d=4$) prefix tree log template miner with non-maskable anchor tokens.
-* [`LayaDecisionEngine`](crates/ulpf-ai/src/laya.rs): Deterministic categorical decision engine for vendor classification and threat scoring.
-* [`Onboarder`](crates/ulpf-ai/src/onboarder.rs): Air-gapped 1-click regex synthesizer and dynamic JSON/YAML parser loader.
-* [`EvaluatorEngine`](crates/ulpf-ai/src/evaluator.rs): Hardcore architectural benchmark and academic accuracy audit suite.
-
-### Cryptographic Integrity & Storage ([`crates/ulpf-integrity`](crates/ulpf-integrity))
-* [`MerkleTree`](crates/ulpf-integrity/src/merkle.rs): RFC 6962 Certificate Transparency compliant Merkle tree implementation with inclusion proof generation.
-* [`Batcher`](crates/ulpf-integrity/src/batcher.rs): Dual-trigger batch accumulator (1,000 events or 2,000 ms duration).
-* [`StorageWriter`](crates/ulpf-integrity/src/storage.rs): Columnar Apache Parquet serialiser with Snappy compression.
-* [`ForensicVerifier`](crates/ulpf-integrity/src/tamper.rs): Bit-for-bit Parquet audit and SHA-256 recalculation engine.
-
----
-
-## 5. Agent Operational Recipes & Runbooks
-
-### Recipe 1: How to Add a New Vendor Log Parser
-To add support for a new firewall (e.g. Check Point, Juniper SRX, or VyOS):
-1. **Define Vendor Format:** In [`crates/ulpf-core/src/parser/classifier.rs`](crates/ulpf-core/src/parser/classifier.rs), add the new vendor enum variant to `VendorFormat`.
-2. **Add Detection Patterns:** In `Classifier::new()`, register identifying string prefixes into the Aho-Corasick automaton.
-3. **Implement Extractor:** In `crates/ulpf-core/src/parser/extractors/`, create `<vendor>.rs` implementing a zero-copy tokenizer that maps fields to OCSF 1.3 `NetworkActivity`.
-4. **Wire into UniversalParser:** In [`crates/ulpf-core/src/parser/mod.rs`](crates/ulpf-core/src/parser/mod.rs), add the extractor to `UniversalParser::parse()`.
-5. **Add Unit & Integration Tests:** In `crates/ulpf-core/tests/parser_tests.rs`, add 5+ realistic sample log lines and assert 100% field extraction accuracy and SHA-256 preservation.
-
-### Recipe 2: How to Add New OCSF Schema Classes
-To extend beyond Class 4001 (`NetworkActivity`):
-1. In [`crates/ulpf-core/src/schema/ocsf.rs`](crates/ulpf-core/src/schema/ocsf.rs), define the new OCSF struct (e.g. `Authentication` Class 3001 or `DNSActivity` Class 4003).
-2. Ensure the struct contains `metadata: Metadata` with `raw_data`, `raw_hash`, `event_id`, and `ingest_time`.
-3. In [`crates/ulpf-integrity/src/storage.rs`](crates/ulpf-integrity/src/storage.rs), update the Arrow schema if new top-level columns are required in Parquet.
-
-### Recipe 3: How to Execute Regression & Accuracy Benchmarks
-Whenever touching the parsing hot path or Drain template miner, agents must run the full comparative evaluator:
 ```bash
-# 1. Compile in optimized release mode
-cargo build --release
+# Verification gate — run in this order before commit. There is no CI to catch you.
+cargo clippy --workspace --all-targets -- -A clippy::too_many_arguments -A clippy::field_reassign_with_default -D warnings
+cargo fmt --all -- --check
+cargo test --workspace        # 56 tests; takes ~40s (ai_tests alone ~30s)
 
-# 2. Run isolated dual comparative evaluation across 16 threads
+# Focused runs
+cargo test -p ulpf-core --test parser_tests <test_name_substr>
+cargo test -p ulpf-ai drain_                       # substring filter across that crate
+
+# Build + evaluate both engines (must be release — see Gotchas)
+cargo build --release
 ./target/release/ulpf evaluate --engine all --duration 3 --threads 16 --samples 10000 --out eval_hardcore_report.md
 ```
-**Verification Gates:**
-* Median latency ($p_{50}$) for 3-Tier Pipeline must remain **< 5.0 µs**.
-* Tier-1 LRU Cache Hit Rate must exceed **90.0%**.
-* Action Inviolability must remain **100% PRESERVED**.
-* Grouping Accuracy (`GA %`) must remain **> 90.0%**.
 
-### Recipe 4: Code Quality & Workspace Verification Gate
-Before committing or submitting changes, agents **MUST** execute:
-```bash
-# 1. Check for warnings and enforce clippy standards
-cargo clippy --workspace --all-targets -- -A clippy::too_many_arguments -A clippy::field_reassign_with_default -D warnings
+**The two `-A` clippy flags are required.** Plain `cargo clippy -- -D warnings` fails on `field_reassign_with_default` (ulpf-core) and `too_many_arguments`.
 
-# 2. Format all crates
-cargo fmt --all -- --check
+Performance gates when touching hot path or miner: p50 < 5.0 µs, LRU hit rate > 90%, Action Inviolability 100%, Grouping Accuracy > 90%.
 
-# 3. Run all workspace tests (56+ tests)
-cargo test --workspace
-```
+## Gotchas (would bite you without this)
 
----
+- **`cargo run -p ulpf-cli -- evaluate|benchmark` panics in debug builds.** clap debug-asserts trip on duplicate short flag `-d` (`data_dir` vs `duration`) in those two subcommands. Release builds work. All other subcommands work in debug.
+- **CLI defaults assume cwd = repo root** (`data/raw`, `data/parquet`, `data/ledger.jsonl`). Run binaries from the root or pass explicit paths.
+- **README drift:** README Step 3 shows `ingest --proto udp --bind ... --out-dir` and Step 6 shows `onboard --name` — the real flags are `--udp/--tcp/--parquet-dir` and `--vendor/--model/--out`. Trust `--help`.
+- **`scripts/run_demo.sh` is destructive:** it `rm -rf`s `data/parquet/` and `data/ledger.jsonl` (both git-tracked) before regenerating. After running it, `git status` will show deleted/modified binary fixtures — restore with `git checkout -- data/` if you didn't intend to regenerate them. `scripts/simulate_tamper.py` mutates Parquet blocks in place too.
+- **Tracked fixtures are deliberately odd:** `data/parquet/block_00000.parquet` is *intentionally* tampered (`ulpf verify` must FAIL on it); `block_00001.parquet` is the valid one. Don't "fix" block 0.
+- **Known flaky test under load:** `ulpf-core/tests/parser_tests.rs::test_classification_sub_microsecond_benchmark` asserts < 2 µs/classification in a *debug* build and can fail on busy machines. Re-run before assuming you broke something.
+- **`scripts/populate_datasets.py` writes to a hardcoded foreign path** (`/home/human/logs_proj/data/raw`); edit `OUT_DIR` before using it here. `ulpf-generator` has the same path as a last-resort fallback but finds `data/raw` relative to cwd first.
+- **`.gitignore` ignores `*.log`** with explicit whitelists (`data/raw/*`, `sample_new_firewall.log`); new raw datasets under other paths need a negation rule to be tracked. `data/parsers/*.{json,yaml}` (onboarder output) is intentionally ignored.
 
-## 6. Directory Structure Overview
+## Extension recipes
 
-```
-logs_proj/
-├── AGENTS.md                  # This agent development handbook
-├── README.md                  # Public documentation & user quickstart
-├── Cargo.toml                 # Workspace root manifest
-├── Cargo.lock                 # Hermetic lockfile
-├── crates/
-│   ├── ulpf-core/             # Ingest sockets, Aho-Corasick classifier, zero-copy extractors, OCSF 1.3 schema, SignatureLruCache
-│   ├── ulpf-integrity/        # RFC 6962 Merkle tree, dual-trigger batcher, Parquet storage, forensic tamper verifier
-│   ├── ulpf-ai/               # DrainDotNet miner, Laya decision engine, 1-click onboarder, 3-tier pipeline, hardcore evaluator
-│   ├── ulpf-generator/        # Multi-threaded async Syslog UDP/TCP traffic generator
-│   └── ulpf-cli/              # Operational CLI binary (`ulpf`)
-├── data/
-│   ├── raw/                   # Ground-truth raw datasets: Cisco ASA, FortiGate, PAN-OS, Suricata, pfSense, Kaggle firewall
-│   ├── parquet/               # Parquet database blocks (sample blocks block_00000.parquet, block_00001.parquet tracked)
-│   └── ledger.jsonl           # Append-only cryptographic Merkle ledger
-├── docs/                      # Architectural specifications, slides, demo scripts, and SIH evaluation dossiers
-└── scripts/                   # Helper automation scripts: run_demo.sh, simulate_tamper.py, populate_datasets.py
-```
+**New vendor parser:**
+1. Add variant to `VendorFormat` in `ulpf-core/src/parser/classifier.rs`.
+2. Register its identifying prefix in `Classifier::new()`.
+3. Create zero-copy extractor in `crates/ulpf-core/src/parser/extractors/<vendor>.rs` (map to OCSF 4001), export from `extractors/mod.rs`.
+4. Wire into `UniversalParser::parse()` in `ulpf-core/src/parser/mod.rs`.
+5. Add 5+ realistic sample lines to `crates/ulpf-core/tests/parser_tests.rs`; assert field accuracy and byte-for-byte SHA-256 preservation.
+
+**New OCSF class:** define in `ulpf-core/src/schema/ocsf.rs` (must carry `metadata` with `raw_data`, `raw_hash`, `event_id`, `ingest_time`); update Arrow schema in `ulpf-integrity/src/storage.rs` if new top-level columns are needed.
+
+**Benchmark regression check:** whenever touching the parsing hot path, Drain miner, or pipeline, run the `evaluate --engine all` command above and compare against `eval_hardcore_report.md` (regenerating it is expected; it's tracked).

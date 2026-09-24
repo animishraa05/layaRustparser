@@ -796,6 +796,16 @@ impl DynamicParserRegistry {
         parser.parse(raw)
     }
 
+    /// Attempt to parse a log line with any registered dynamic parser
+    pub fn parse_any(&self, raw: &str) -> Option<NetworkActivity> {
+        for parser in self.parsers.values() {
+            if let Ok(activity) = parser.parse(raw) {
+                return Some(activity);
+            }
+        }
+        None
+    }
+
     pub fn len(&self) -> usize {
         self.parsers.len()
     }
