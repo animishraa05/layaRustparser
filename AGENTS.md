@@ -20,7 +20,7 @@ Workspace of 5 crates (root `Cargo.toml`, edition 2021, no pinned toolchain — 
 | `crates/ulpf-integrity` | RFC 6962 Merkle tree, dual-trigger batcher (1,000 events / 2,000 ms), Parquet writer, tamper verifier |
 | `crates/ulpf-ai` | `DrainMiner`, `LayaDecisionEngine`, `Onboarder`, `TieredPipeline` (3-tier), `EvaluatorEngine` |
 | `crates/ulpf-generator` | Traffic blaster binary `ulpf-generator` |
-| `crates/ulpf-cli` | Binary `ulpf`; subcommands: `ingest`, `verify`, `onboard`, `benchmark`, `evaluate`, `inspect`, `tamper` |
+| `crates/ulpf-cli` | Binary `ulpf`; subcommands: `ingest`, `verify`, `onboard`, `benchmark`, `evaluate`, `scorecard`, `inspect`, `tamper` |
 
 Real entrypoints: `crates/ulpf-cli/src/main.rs`, `crates/ulpf-generator/src/main.rs`. Key wiring: `ulpf-ai/src/pipeline.rs` (Tier1 LRU → Tier2 Drain → Tier3 Laya), `ulpf-core/src/parser/mod.rs` (baseline `UniversalParser`), `ulpf-integrity/src/storage.rs` (Arrow schema: `event_id, block_id, leaf_index, timestamp, vendor, raw_log, raw_hash, ocsf_json`).
 

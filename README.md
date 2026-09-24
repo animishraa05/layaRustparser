@@ -388,6 +388,14 @@ docker compose up -d        # publishes 5140/udp + 5140/tcp, mounts ./data
 
 ## 11. Quick start
 
+After `cargo build --release`, one command gives the full picture — both engines over the committed corpus, one aligned box you can screenshot (throughput, latency deltas, accuracy audit, PASS/FAIL gates, plain-words verdict), plus `scorecard_report.md` (regenerable, not committed):
+
+```bash
+./target/release/ulpf scorecard
+```
+
+Full walkthrough:
+
 ```bash
 # 1. Build (rustc 1.96, edition 2021, stable toolchain)
 cargo build --release
@@ -430,6 +438,7 @@ bash scripts/run_demo.sh
 | `onboard` | Synthesize + validate a parser from sample lines | `-s/--sample <file>` · `-v/--vendor <name>` · `-m/--model <name>` · `-o/--out data/parsers` |
 | `benchmark` | Multi-core parse/normalize throughput | `--data-dir data/raw` *(long-only)* · `-d/--duration 5` · `-t/--threads 16` · `--compare` |
 | `evaluate` | Baseline vs 3-Tier scorecard + percentiles + cache stats | `-e/--engine {all,baseline,tiered}` · `--corpus {core,adversarial,holdout}` · `--data-dir data/raw` · `-d/--duration 3` · `-t/--threads 16` · `-s/--samples 10000` · `-o/--out report.md` · `--json-out` · `--audit-dump` |
+| `scorecard` | One-command side-by-side scorecard box: throughput, latency deltas, accuracy audit, PASS/FAIL gates, verdict + markdown report | `--corpus {core,adversarial,holdout}` · `--data-dir data/raw` · `-d/--duration 3` · `-t/--threads 16` · `-s/--samples 10000` · `-o/--out scorecard_report.md` |
 | `inspect` | Print forensic records from a block | `-f/--file <block.parquet>` · `-c/--count 1` |
 | `tamper` | Adversarial edit of a stored record (attack simulator) | `-f/--file <block.parquet>` · `-l/--leaf 0` · `-i/--ip 10.99.99.99` |
 
