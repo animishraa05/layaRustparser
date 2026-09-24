@@ -47,13 +47,13 @@ Performance gates when touching hot path or miner: p50 < 5.0 µs, LRU hit rate >
 
 ## Gotchas (would bite you without this)
 
-- **`cargo run -p ulpf-cli -- evaluate|benchmark` panics in debug builds.** clap debug-asserts trip on duplicate short flag `-d` (`data_dir` vs `duration`) in those two subcommands. Release builds work. All other subcommands work in debug.
+- **`cargo run -p ulpf-cli -- evaluate|benchmark` in debug builds:** the old duplicate `-d` short flag (`data_dir` vs `duration`) that tripped clap debug-asserts was removed in P10.0 — debug now works. Release is still the intended eval mode (numbers are what count).
 - **CLI defaults assume cwd = repo root** (`data/raw`, `data/parquet`, `data/ledger.jsonl`). Run binaries from the root or pass explicit paths.
 - **README drift:** README Step 3 shows `ingest --proto udp --bind ... --out-dir` and Step 6 shows `onboard --name` — the real flags are `--udp/--tcp/--parquet-dir` and `--vendor/--model/--out`. Trust `--help`.
-- **`scripts/run_demo.sh` is destructive:** it `rm -rf`s `data/parquet/` and `data/ledger.jsonl` (both git-tracked) before regenerating. After running it, `git status` will show deleted/modified binary fixtures — restore with `git checkout -- data/` if you didn't intend to regenerate them. `scripts/simulate_tamper.py` mutates Parquet blocks in place too.
+- **`scripts/run_demo.sh` is now non-destructive (P10.0):** it writes to scratch `data/demo/` (gitignored), never the tracked `data/parquet/` fixtures. `scripts/simulate_tamper.py` still mutates the Parquet block it is pointed at — the no-arg default is the intentionally-tampered `data/parquet/block_00000.parquet`; pass an explicit path for anything else.
 - **Tracked fixtures are deliberately odd:** `data/parquet/block_00000.parquet` is *intentionally* tampered (`ulpf verify` must FAIL on it); `block_00001.parquet` is the valid one. Don't "fix" block 0.
 - **Known flaky test under load:** `ulpf-core/tests/parser_tests.rs::test_classification_sub_microsecond_benchmark` asserts < 2 µs/classification in a *debug* build and can fail on busy machines. Re-run before assuming you broke something.
-- **`scripts/populate_datasets.py` writes to a hardcoded foreign path** (`/home/human/logs_proj/data/raw`); edit `OUT_DIR` before using it here. `ulpf-generator` has the same path as a last-resort fallback but finds `data/raw` relative to cwd first.
+- **Dataset generator paths are repo-relative (P10.0):** `scripts/populate_datasets.py` writes to `<repo>/data/raw` (override with `ULPF_OUT_DIR`); `ulpf-generator`'s `locate_data_dir` only probes repo-relative `data/raw` candidates — the old `/home/human/...` foreign fallback was removed.
 - **`.gitignore` ignores `*.log`** with explicit whitelists (`data/raw/*`, `sample_new_firewall.log`); new raw datasets under other paths need a negation rule to be tracked. `data/parsers/*.{json,yaml}` (onboarder output) is intentionally ignored.
 
 ## Extension recipes

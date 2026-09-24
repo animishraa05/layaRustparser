@@ -17,7 +17,12 @@ from datetime import datetime, timedelta
 
 random.seed(42)
 
-OUT_DIR = "/home/human/logs_proj/data/raw"
+# Script-relative output (repo's data/raw) — never a foreign hardcoded home.
+# Override: ULPF_OUT_DIR=/path/to/raw python3 scripts/populate_datasets.py
+OUT_DIR = os.environ.get(
+    "ULPF_OUT_DIR",
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "data", "raw"),
+)
 os.makedirs(OUT_DIR, exist_ok=True)
 
 # -------------------------------------------------------------

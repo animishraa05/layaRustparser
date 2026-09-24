@@ -328,8 +328,8 @@ after a P6 step; p50 ≥ 5.0 µs after any step.
 
 1. Work only in `/home/ani/parser-lab`. Never touch `/home/ani/parser` (counterpart's track).
 2. Run binaries from the lab cwd (CLI defaults: `data/raw`, `data/parquet`, `data/ledger.jsonl`).
-3. Never run `scripts/run_demo.sh` casually — it `rm -rf`s tracked fixtures; restore via
-   `git checkout -- data/` if hit.
+3. `scripts/run_demo.sh` writes to scratch `data/demo/` (gitignored) — safe to run
+   any time; tracked fixtures in `data/parquet/` are never touched.
 4. Commit per phase (or per gated step in P6) with the metric delta in the message.
 5. No network at runtime; fetch scripts are explicit dev-time invocations only.
 

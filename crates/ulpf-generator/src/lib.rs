@@ -121,11 +121,12 @@ pub fn locate_data_dir(custom_path: Option<&Path>) -> Result<PathBuf> {
         }
     }
 
+    // Repo-relative candidates only — a hardcoded foreign home directory
+    // would silently resolve on one machine and fail everywhere else.
     let candidates = [
         PathBuf::from("data/raw"),
         PathBuf::from("../data/raw"),
         PathBuf::from("../../data/raw"),
-        PathBuf::from("/home/human/logs_proj/data/raw"),
     ];
 
     for candidate in &candidates {

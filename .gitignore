@@ -16,3 +16,8 @@ audit*_dump.jsonl
 # Full end-to-end dataset (generated on demand via --full; never committed)
 data/raw/full/
 /data/full_out/
+# run_demo.sh scratch output (never the tracked data/parquet fixtures)
+/data/demo/
+
+# Python bytecode caches (py_compile checks)
+__pycache__/

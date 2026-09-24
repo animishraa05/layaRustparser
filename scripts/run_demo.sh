@@ -34,9 +34,11 @@ echo -e "${WHITE}   Submission for National Technical Research Organisation (NTR
 echo -e "${CYAN}==============================================================================${RESET}"
 sleep 1
 
-# Clean temporary test data
-rm -rf "$ROOT_DIR/data/parquet" "$ROOT_DIR/data/ledger.jsonl"
-mkdir -p "$ROOT_DIR/data/parquet" "$ROOT_DIR/data/parsers"
+# Scratch output dir — NEVER the git-tracked data/parquet fixtures (they are
+# regenerated only by explicit request; this demo is safe to run any time).
+DEMO_DIR="$ROOT_DIR/data/demo"
+rm -rf "$DEMO_DIR"
+mkdir -p "$DEMO_DIR/parquet" "$ROOT_DIR/data/parsers"
 
 # ------------------------------------------------------------------------------
 # STEP 1: Live High-Throughput Ingestion & OCSF Normalization
@@ -50,8 +52,8 @@ echo -e "${WHITE}Launching ULPF Ingestion Engine on UDP/TCP port 5140...${RESET}
 "$ULPF_BIN" ingest \
     --udp 127.0.0.1:5140 \
     --tcp 127.0.0.1:5140 \
-    --parquet-dir "$ROOT_DIR/data/parquet" \
-    --ledger "$ROOT_DIR/data/ledger.jsonl" \
+    --parquet-dir "$DEMO_DIR/parquet" \
+    --ledger "$DEMO_DIR/ledger.jsonl" \
     --batch-size 1000 \
     --batch-timeout 1000 > /tmp/ulpf_ingest.log 2>&1 &
 ENGINE_PID=$!
@@ -81,12 +83,12 @@ echo -e "\n${BOLD}${BLUE}-------------------------------------------------------
 echo -e "${BOLD}${BLUE} STEP 2: Lossless Forensic Traceability (UUIDv7 + SHA-256 Linkage)             ${RESET}"
 echo -e "${BOLD}${BLUE}------------------------------------------------------------------------------${RESET}"
 
-FIRST_PARQUET=$(ls -1 "$ROOT_DIR/data/parquet"/*.parquet 2>/dev/null | head -n 1 || true)
+FIRST_PARQUET=$(ls -1 "$DEMO_DIR/parquet"/*.parquet 2>/dev/null | head -n 1 || true)
 
 if [ -z "$FIRST_PARQUET" ]; then
     echo -e "${RED}[!] Waiting for batch flush...${RESET}"
     sleep 2
-    FIRST_PARQUET=$(ls -1 "$ROOT_DIR/data/parquet"/*.parquet 2>/dev/null | head -n 1 || true)
+    FIRST_PARQUET=$(ls -1 "$DEMO_DIR/parquet"/*.parquet 2>/dev/null | head -n 1 || true)
 fi
 
 "$ULPF_BIN" inspect --file "$FIRST_PARQUET" --count 1
@@ -100,7 +102,7 @@ echo -e "${BOLD}${BLUE} STEP 3: RFC 6962 Merkle Tree Audit Verification (Tamper-
 echo -e "${BOLD}${BLUE}------------------------------------------------------------------------------${RESET}"
 echo -e "${WHITE}Executing mathematical audit against anchored ledger...${RESET}"
 
-"$ULPF_BIN" verify --file "$FIRST_PARQUET" --ledger "$ROOT_DIR/data/ledger.jsonl"
+"$ULPF_BIN" verify --file "$FIRST_PARQUET" --ledger "$DEMO_DIR/ledger.jsonl"
 sleep 1
 
 # ------------------------------------------------------------------------------
@@ -116,7 +118,7 @@ python3 "$ROOT_DIR/scripts/simulate_tamper.py" "$FIRST_PARQUET"
 
 echo -e "\n${WHITE}Re-running ULPF Cryptographic Auditor on the tampered archive block:${RESET}"
 set +e
-"$ULPF_BIN" verify --file "$FIRST_PARQUET" --ledger "$ROOT_DIR/data/ledger.jsonl"
+"$ULPF_BIN" verify --file "$FIRST_PARQUET" --ledger "$DEMO_DIR/ledger.jsonl"
 set -e
 
 echo -e "\n${GREEN}${BOLD}[✔] TEST 4 PASSED: Adversarial tampering detected with 100% precision!${RESET}"
