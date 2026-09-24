@@ -347,3 +347,134 @@ fn test_evaluator_comparative_run() {
     let terminal_dash = report.render_terminal_dashboard();
     assert!(terminal_dash.contains("ULPF HARDCORE ARCHITECTURAL & ACCURACY EVALUATOR"));
 }
+
+// ============================================================================
+// P1 — EVALUATOR GROUND-TRUTH / RULER TESTS (measurement-first fixes)
+// ============================================================================
+
+use ulpf_ai::drain::mask_line;
+use ulpf_ai::EvaluatorEngine;
+
+/// OCSF disposition alignment: deny is Blocked (disposition_id 2), never Dropped;
+/// session-end states of permitted traffic are Allowed.
+#[test]
+fn test_gt_disposition_ocfs_alignment() {
+    // ASA deny-by-policy -> Blocked
+    let asa_deny = "<164>Sep 21 14:00:00 fw %ASA-4-106023: Deny tcp src outside:198.51.100.5/1234 dst inside:10.0.0.2/80 access-group out";
+    let (_, _, act) = EvaluatorEngine::extract_ground_truth(asa_deny);
+    assert_eq!(act.as_deref(), Some("Blocked"));
+
+    // ASA built -> Allowed
+    let asa_built = "<162>Sep 21 14:00:00 fw %ASA-6-302013: Built outbound TCP connection 1 for outside:10.0.0.1/1000 to inside:10.0.0.2/80";
+    let (_, _, act) = EvaluatorEngine::extract_ground_truth(asa_built);
+    assert_eq!(act.as_deref(), Some("Allowed"));
+
+    // FortiGate deny -> Blocked
+    let fgt_deny = r#"<189>date=2026-09-21 time=14:00:02 devname="FGT" logid="0000000019" type="traffic" action="deny" srcip=10.0.0.1 dstip=203.0.113.1 proto=6"#;
+    let (v, t, act) = EvaluatorEngine::extract_ground_truth(fgt_deny);
+    assert_eq!(v, "Fortinet");
+    assert_eq!(t, "fortigate_traffic");
+    assert_eq!(act.as_deref(), Some("Blocked"));
+
+    // FortiGate session-end (timeout/close/rst) -> Allowed, not Unknown
+    for action in ["timeout", "close", "client-rst", "server-rst"] {
+        let raw = format!(
+            r#"<189>date=2026-09-21 time=14:00:02 devname="FGT" logid="0000000019" type="traffic" action="{action}" srcip=10.0.0.1 dstip=203.0.113.1 proto=6"#
+        );
+        let (_, _, act) = EvaluatorEngine::extract_ground_truth(&raw);
+        assert_eq!(act.as_deref(), Some("Allowed"), "action={action}");
+    }
+}
+
+/// CEF ground truth: vendor comes from Header Field 2 (any vendor's CEF),
+/// disposition from the `act=` extension token.
+#[test]
+fn test_gt_cef_vendor_and_action() {
+    let cef_accept = "CEF:0|Fortinet|FortiGate|v7.0.2|0000000019|traffic:forward accept|3|deviceExternalId=FGT1 src=192.168.1.1 spt=25297 dst=203.0.113.1 dpt=80 proto=6 act=accept";
+    let (v, t, act) = EvaluatorEngine::extract_ground_truth(cef_accept);
+    assert_eq!(v, "Fortinet");
+    assert_eq!(t, "cef");
+    assert_eq!(act.as_deref(), Some("Allowed"));
+
+    let cef_deny = "CEF:0|Cisco|ASA|v9.16|4-106023|Deny|2|src=192.0.2.1 spt=443 dst=10.0.0.1 dpt=22 proto=6 act=deny";
+    let (v, _, act) = EvaluatorEngine::extract_ground_truth(cef_deny);
+    assert_eq!(v, "Cisco");
+    assert_eq!(act.as_deref(), Some("Blocked"));
+
+    let cef_timeout =
+        "CEF:0|Fortinet|FortiGate|v7.0.2|0000000019|traffic|3|act=timeout src=10.0.0.1";
+    let (_, _, act) = EvaluatorEngine::extract_ground_truth(cef_timeout);
+    assert_eq!(act.as_deref(), Some("Allowed"));
+}
+
+/// Explicit vendor label map — fixed table, never fuzzy matching.
+#[test]
+fn test_audit_vendor_label_map() {
+    assert_eq!(EvaluatorEngine::map_audit_vendor("oisf"), "suricata");
+    assert_eq!(EvaluatorEngine::map_audit_vendor("netgate"), "pfsense");
+    assert_eq!(EvaluatorEngine::map_audit_vendor("cisco"), "cisco");
+    assert_eq!(EvaluatorEngine::map_audit_vendor("unknown"), "unknown");
+}
+
+/// Numeric IANA protocol equivalence: `proto=17` in raw validates an extracted UDP.
+#[test]
+fn test_protocol_numeric_equivalence_audit() {
+    assert!(EvaluatorEngine::raw_contains_numeric(
+        "date=2026-01-01 proto=17 spt=5",
+        17
+    ));
+    assert!(EvaluatorEngine::raw_contains_numeric(r#"{"proto": 6}"#, 6));
+    assert!(EvaluatorEngine::raw_contains_numeric("...,4,17,...", 17));
+    // Must not match on unrelated content
+    assert!(!EvaluatorEngine::raw_contains_numeric(
+        "proto=TCP spt=443",
+        17
+    ));
+    assert!(!EvaluatorEngine::raw_contains_numeric("proto=17", 6));
+}
+
+/// Template validity (honest TA): token-aligned generalization of the masked line,
+/// syslog GT tag preserved. No `|| !template.is_empty()` escape hatch remains.
+#[test]
+fn test_template_validity_alignment() {
+    let raw = "%ASA-6-302013: Built outbound TCP connection 1000672 for outside:203.0.113.54/25 (203.0.113.54/25) to inside:10.1.6.180/52369 (198.51.100.209/52369)";
+    let masked = mask_line(raw);
+
+    // A template equal to (or a wildcard-generalization of) the masked line is valid
+    assert!(EvaluatorEngine::template_is_valid(
+        raw,
+        &masked,
+        "%ASA-6-302013"
+    ));
+
+    // Wildcards at masked positions remain valid
+    let generalized = masked.replace("203.0.113.54/25", "<*>");
+    assert!(EvaluatorEngine::template_is_valid(
+        raw,
+        &generalized,
+        "%ASA-6-302013"
+    ));
+
+    // A divergent literal (Built -> Teardown) must FAIL — old metric passed this
+    let bogus = masked.replace("Built", "Teardown");
+    assert!(!EvaluatorEngine::template_is_valid(
+        raw,
+        &bogus,
+        "%ASA-6-302013"
+    ));
+
+    // A template that lost the syslog tag must FAIL
+    let tagless = masked.replace("%ASA-6-302013:", "");
+    assert!(!EvaluatorEngine::template_is_valid(
+        raw,
+        &tagless,
+        "%ASA-6-302013"
+    ));
+
+    // Empty template must FAIL (old metric's `!is_empty()` clause is gone)
+    assert!(!EvaluatorEngine::template_is_valid(
+        raw,
+        "",
+        "%ASA-6-302013"
+    ));
+}

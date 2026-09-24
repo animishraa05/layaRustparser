@@ -151,7 +151,10 @@ impl FortigateExtractor {
             Some("accept") => (disposition::ALLOWED, activity_id::TRAFFIC_FLOW),
             Some("deny") | Some("block") => (disposition::BLOCKED, activity_id::OTHER),
             Some("drop") => (disposition::DROPPED, activity_id::OTHER),
-            Some("close") | Some("client-rst") | Some("server-rst") => {
+            // Session-end states of permitted traffic (OCSF: Allowed + CLOSE);
+            // `timeout` was previously left to fall through to UNKNOWN, which
+            // failed the evaluator's disposition check for idle-expired sessions.
+            Some("close") | Some("client-rst") | Some("server-rst") | Some("timeout") => {
                 (disposition::ALLOWED, activity_id::CLOSE)
             }
             Some("open") | Some("start") => (disposition::ALLOWED, activity_id::OPEN),

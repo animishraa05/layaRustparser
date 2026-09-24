@@ -74,6 +74,45 @@ pub struct AccuracyAuditSummary {
     pub lossless_sha256_match_pct: f64,
     /// RFC 4122 UUIDv7 conformity rate
     pub valid_uuid_v7_pct: f64,
+    /// Oracle ceiling GA: clusters built from ground truth itself (hash of the GT tag).
+    /// Labeled ceiling ONLY — never a fair baseline (a fair naive baseline is the engine's
+    /// own post-mask exact-match clustering).
+    pub oracle_ga_pct: f64,
+    /// Number of distinct clusters produced (template compression; fewer = stronger generalization)
+    pub unique_clusters: usize,
+}
+
+/// A single per-record audit failure, emitted for `--audit-dump` JSONL export.
+/// Metric names: vendor, grouping, template, src_ip, dst_ip, src_port, dst_port,
+/// protocol, disposition.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AuditFailure {
+    pub metric: String,
+    pub corpus_index: usize,
+    pub raw: String,
+    pub expected: String,
+    pub observed: String,
+    pub cluster_id: usize,
+}
+
+impl AuditFailure {
+    fn new(
+        metric: &str,
+        corpus_index: usize,
+        raw: &str,
+        expected: &str,
+        observed: &str,
+        cluster_id: usize,
+    ) -> Self {
+        Self {
+            metric: metric.to_string(),
+            corpus_index,
+            raw: raw.to_string(),
+            expected: expected.to_string(),
+            observed: observed.to_string(),
+            cluster_id,
+        }
+    }
 }
 
 /// Internal multi-tier diagnostics telemetry
@@ -101,6 +140,8 @@ pub struct BenchmarkTierResult {
     pub latency: LatencySummary,
     pub accuracy: AccuracyAuditSummary,
     pub tier_diagnostics: Option<TierDiagnosticsSummary>,
+    /// Per-record audit mismatches (for `--audit-dump` JSONL export)
+    pub failures: Vec<AuditFailure>,
 }
 
 /// Comprehensive side-by-side evaluation comparison report
@@ -488,7 +529,9 @@ impl EvaluationReport {
             ));
             md.push_str(&format!("| **Vendor Classification (VCA)** | **{:.2}%** | **{:.2}%** | Ground-Truth Exact Match |\n", b.accuracy.vendor_classification_accuracy_pct, t.accuracy.vendor_classification_accuracy_pct));
             md.push_str(&format!("| **Grouping Accuracy (GA %)** | **{:.2}%** | **{:.2}%** | Loghub-2.0 Standard |\n", b.accuracy.grouping_accuracy_ga_pct, t.accuracy.grouping_accuracy_ga_pct));
-            md.push_str(&format!("| **Template Accuracy (TA %)** | **{:.2}%** | **{:.2}%** | Variable Masking Integrity |\n", b.accuracy.template_accuracy_ta_pct, t.accuracy.template_accuracy_ta_pct));
+            md.push_str(&format!("| **Template Accuracy (TA %)** | **{:.2}%** | **{:.2}%** | Template Validity (generalization-correct vs masked line) |\n", b.accuracy.template_accuracy_ta_pct, t.accuracy.template_accuracy_ta_pct));
+            md.push_str(&format!("| **Oracle GA Ceiling (GT-hash, unfair)** | **{:.2}%** | **{:.2}%** | Labeled Ceiling — Not a Fair Baseline |\n", b.accuracy.oracle_ga_pct, t.accuracy.oracle_ga_pct));
+            md.push_str(&format!("| **Unique Templates (compression)** | **{}** | **{}** | Fewer = Better Generalization |\n", b.accuracy.unique_clusters, t.accuracy.unique_clusters));
             md.push_str(&format!("| **Field Extraction Macro F1** | **{:.2}%** | **{:.2}%** | IP/Port/Proto Extraction |\n", b.accuracy.field_extraction_f1_pct, t.accuracy.field_extraction_f1_pct));
             md.push_str(&format!("| **Disposition Resolution Accuracy** | **{:.2}%** | **{:.2}%** | OCSF Action Mapping |\n", b.accuracy.disposition_accuracy_pct, t.accuracy.disposition_accuracy_pct));
             md.push_str("| **Action Inviolability** | N/A | **100% PRESERVED** | `ALLOW`/`DENY` isolated |\n\n");
@@ -756,17 +799,18 @@ impl EvaluatorEngine {
         );
 
         // Exhaustive Accuracy Audit
-        let accuracy = Self::audit_accuracy(
+        let (accuracy, failures) = Self::audit_accuracy(
             |raw| {
                 let parser = UniversalParser::new();
                 parser.parse_lossless(raw)
             },
             |raw| {
-                // Baseline clustering via signature template
-                let (_, gt_tmpl, _) = Self::extract_ground_truth(raw);
-                let cluster_id =
-                    (SignatureLruCache::compute_signature_hash(&gt_tmpl) % 1000) as usize;
-                (cluster_id, gt_tmpl)
+                // Naive exact-match baseline (FAIR): cluster identity = canonical
+                // post-mask skeleton hash. No ground-truth involvement — the GT-hash
+                // variant lives only inside audit_accuracy as the labeled oracle ceiling.
+                let masked = crate::drain::mask_line(raw);
+                let cluster_id = SignatureLruCache::compute_signature_hash(&masked) as usize;
+                (cluster_id, masked)
             },
             &corpus,
         );
@@ -777,6 +821,7 @@ impl EvaluatorEngine {
             latency,
             accuracy,
             tier_diagnostics: None,
+            failures,
         }
     }
 
@@ -867,7 +912,7 @@ impl EvaluatorEngine {
 
         let mut miner = DrainMiner::new(DrainConfig::default());
         let pipe_for_acc = pipeline.clone();
-        let accuracy = Self::audit_accuracy(
+        let (accuracy, failures) = Self::audit_accuracy(
             move |raw| pipe_for_acc.process(raw),
             move |raw| {
                 let res = miner.add_log(raw);
@@ -889,9 +934,9 @@ impl EvaluatorEngine {
             tier1_misses: pipe_stats.lru_stats.misses,
             tier1_evictions: pipe_stats.lru_stats.evictions,
             tier1_entries_count: pipe_stats.lru_stats.entries_count,
-            tier2_clusters_count: 12,
+            tier2_clusters_count: pipeline.tier2_cluster_count(),
             tier2_cluster_matches: pipe_stats.tier2_drain_hits,
-            tier2_unique_anchor_enforced: true,
+            tier2_unique_anchor_enforced: !DrainConfig::default().unique_anchor_tokens.is_empty(),
             tier3_laya_dispatches: pipe_stats.tier3_laya_dispatches,
             tier3_ai_deduplication_pct: dedupe_pct,
             tier3_auto_onboarded_count: pipe_stats.tier3_laya_onboarded,
@@ -903,6 +948,7 @@ impl EvaluatorEngine {
             latency,
             accuracy,
             tier_diagnostics,
+            failures,
         }
     }
 
@@ -954,8 +1000,25 @@ impl EvaluatorEngine {
         }
     }
 
-    /// Extract ground truth vendor, template tag, and expected action from raw log
+    /// Extract ground truth vendor, template tag, and expected action from raw log.
+    /// Ground truth follows OCSF semantics: `disposition_id` 1 Allowed / 2 Blocked / 3 Dropped.
     pub fn extract_ground_truth(raw: &str) -> (String, String, Option<String>) {
+        // ArcSight CEF (vendor-neutral): CEF:Version|Vendor|Product|Version|SigID|Name|Severity|Extension
+        if let Some(cef_pos) = raw.find("CEF:") {
+            let cef = &raw[cef_pos..];
+            let mut parts = cef.splitn(8, '|');
+            parts.next(); // CEF:Version
+            let vendor = parts.next().unwrap_or("Unknown").trim().to_string();
+            parts.next(); // Product
+            parts.next(); // Device Version
+            parts.next(); // Signature ID
+            parts.next(); // Name
+            parts.next(); // Severity
+            let extension = parts.next().unwrap_or("");
+            let action = Self::action_from_kv_token(extension, "act=");
+            return (vendor, "cef".to_string(), action);
+        }
+
         if raw.contains("%ASA-") {
             let tag = if let Some(pos) = raw.find("%ASA-") {
                 let end = raw[pos..].find(':').unwrap_or(15);
@@ -967,7 +1030,8 @@ impl EvaluatorEngine {
             let action = if raw.contains("Built") || raw.contains("permit") {
                 Some("Allowed".to_string())
             } else if raw.contains("Deny") || raw.contains("drop") {
-                Some("Dropped".to_string())
+                // OCSF: deny-by-policy is Blocked (disposition_id 2), never Dropped
+                Some("Blocked".to_string())
             } else if raw.contains("Teardown") {
                 Some("Allowed".to_string())
             } else {
@@ -978,29 +1042,14 @@ impl EvaluatorEngine {
             || raw.contains("type=\"traffic\"")
             || raw.contains("logid=")
         {
-            let action = if raw.contains("action=\"accept\"") || raw.contains("action=accept") {
-                Some("Allowed".to_string())
-            } else if raw.contains("action=\"deny\"")
-                || raw.contains("action=deny")
-                || raw.contains("action=\"drop\"")
-            {
-                Some("Dropped".to_string())
-            } else {
-                None
-            };
+            let action = Self::action_from_kv_token(raw, "action=");
             (
                 "Fortinet".to_string(),
                 "fortigate_traffic".to_string(),
                 action,
             )
         } else if raw.contains(",TRAFFIC,") || raw.contains(",THREAT,") {
-            let action = if raw.contains(",allow,") {
-                Some("Allowed".to_string())
-            } else if raw.contains(",deny,") || raw.contains(",drop,") {
-                Some("Dropped".to_string())
-            } else {
-                None
-            };
+            let action = Self::panos_action_field(raw);
             ("Palo Alto".to_string(), "panos_traffic".to_string(), action)
         } else if raw.starts_with('{') || raw.contains("\"event_type\"") {
             let action = if raw.contains("\"alert\"") {
@@ -1032,17 +1081,125 @@ impl EvaluatorEngine {
         }
     }
 
-    /// Audit comprehensive schema, semantic, and academic clustering accuracy
+    /// Resolve an OCSF disposition from a whitespace-delimited `key=value` / `key="value"` token
+    /// (FortiGate `action="timeout"`, CEF extension `act=accept`, ...).
+    /// Mapping: accept/allow -> Allowed, deny/blocked -> Blocked, drop -> Dropped,
+    /// close/timeout/client-rst/server-rst -> Allowed (session end of permitted traffic).
+    fn action_from_kv_token(text: &str, key: &str) -> Option<String> {
+        for token in text.split_whitespace() {
+            if let Some(value) = token.strip_prefix(key) {
+                let value = value.trim_matches('"').trim_matches(',');
+                return match value {
+                    "accept" | "allow" => Some("Allowed".to_string()),
+                    "deny" | "blocked" | "block" => Some("Blocked".to_string()),
+                    "drop" => Some("Dropped".to_string()),
+                    "close" | "closed" | "timeout" | "client-rst" | "server-rst" | "reset" => {
+                        Some("Allowed".to_string())
+                    }
+                    _ => None,
+                };
+            }
+        }
+        None
+    }
+
+    /// Resolve ground-truth disposition for PAN-OS from the positional action column
+    /// (`fields[traffic_idx + 27]`), falling back to ordered substring markers when the
+    /// positional layout cannot be located. Positional beats substring because the PAN-OS
+    /// `subtype` column (start/end/drop/deny) also produces `,deny,`/`,drop,` markers.
+    fn panos_action_field(raw: &str) -> Option<String> {
+        let fields = ulpf_core::parser::extractors::split_csv(raw);
+        let traffic_pos = fields
+            .iter()
+            .position(|f| f.eq_ignore_ascii_case("TRAFFIC") || f.eq_ignore_ascii_case("THREAT"));
+        if let Some(tp) = traffic_pos {
+            if let Some(action) = fields.get(tp + 27) {
+                match action.to_ascii_lowercase().as_str() {
+                    "allow" => return Some("Allowed".to_string()),
+                    "deny" => return Some("Blocked".to_string()),
+                    "drop" => return Some("Dropped".to_string()),
+                    _ => {}
+                }
+            }
+        }
+        // Fallback: ordered substring markers (drop > deny > allow)
+        if raw.contains(",drop,") {
+            Some("Dropped".to_string())
+        } else if raw.contains(",deny,") {
+            Some("Blocked".to_string())
+        } else if raw.contains(",allow,") {
+            Some("Allowed".to_string())
+        } else {
+            None
+        }
+    }
+
+    /// Map extractor-emitted vendor labels onto ground-truth vocabulary.
+    /// Explicit fixed table, never fuzzy/edit-distance: a genuinely wrong vendor must fail.
+    pub fn map_audit_vendor(vendor_lower: &str) -> &str {
+        match vendor_lower {
+            "oisf" => "suricata",
+            "netgate" => "pfsense",
+            other => other,
+        }
+    }
+
+    /// True when `num` appears in `raw` as a fully delimited alphanumeric token
+    /// (e.g. `proto=17`, `"proto": 6`, `,6,`). Grants numeric IANA equivalence so a
+    /// correct protocol mapping (17 -> UDP) is not punished for the raw line carrying
+    /// the number instead of the name.
+    pub fn raw_contains_numeric(raw: &str, num: u8) -> bool {
+        let target = num.to_string();
+        raw.split(|c: char| !c.is_alphanumeric())
+            .any(|seg| seg == target)
+    }
+
+    /// Template-Validity (honest TA): the produced cluster template must be an exact
+    /// token-aligned generalization of this record's own masked line:
+    /// non-empty, same token count, every non-`<*>` token identical at its position,
+    /// and any syslog-style GT tag (`%ASA-6-302013:`) preserved verbatim.
+    /// No similarity threshold — Token-F1 of 1.0 is required.
+    pub fn template_is_valid(raw: &str, template: &str, gt_template: &str) -> bool {
+        if template.is_empty() {
+            return false;
+        }
+        let masked_tokens = DrainMiner::tokenize(&crate::drain::mask_line(raw));
+        let tmpl_tokens: Vec<&str> = template.split_whitespace().collect();
+        if tmpl_tokens.len() != masked_tokens.len() {
+            return false;
+        }
+        let aligned = tmpl_tokens
+            .iter()
+            .zip(masked_tokens.iter())
+            .all(|(t, m)| *t == "<*>" || *t == m.as_str());
+        if !aligned {
+            return false;
+        }
+        if gt_template.starts_with('%') && !template.contains(gt_template) {
+            return false;
+        }
+        true
+    }
+
+    /// Audit comprehensive schema, semantic, and academic clustering accuracy.
+    ///
+    /// Returns the summary plus every per-record mismatch (for `--audit-dump` JSONL).
+    /// Oracle GA (clusters built from the ground-truth tag itself) is computed
+    /// alongside the primary GA and reported only as a labeled ceiling — never as
+    /// a fair baseline. The fair baseline engine is the naive post-mask exact-match
+    /// clustering passed in via `cluster_fn` on the baseline side.
     fn audit_accuracy<F, C>(
         mut parse_fn: F,
         mut cluster_fn: C,
         corpus: &[String],
-    ) -> AccuracyAuditSummary
+    ) -> (AccuracyAuditSummary, Vec<AuditFailure>)
     where
         F: FnMut(&str) -> NetworkActivity,
         C: FnMut(&str) -> (usize, String),
     {
-        let audit_count = 1000.min(corpus.len());
+        // Full-coverage audit: every corpus line is scored. The former
+        // `1000.min(...)` cap silently excluded all pfSense records.
+        let audit_count = corpus.len();
         let mut vendor_correct = 0;
         let mut sha_matches = 0;
         let mut uuid_valid = 0;
@@ -1053,34 +1210,67 @@ impl EvaluatorEngine {
         let mut proto_correct = 0;
         let mut disposition_correct = 0;
         let mut template_correct = 0;
+        let mut failures: Vec<AuditFailure> = Vec::new();
 
         // Grouping Accuracy Tracking: maps cluster_id -> (ground_truth_tag -> count)
         let mut cluster_to_gt_map: HashMap<usize, HashMap<String, usize>> = HashMap::new();
+        // Oracle ceiling: identity = ground-truth tag (labeled, never a fair baseline)
+        let mut oracle_map: HashMap<usize, HashMap<String, usize>> = HashMap::new();
+        // (corpus index, cluster id, gt tag) retained for the grouping-failure pass
+        let mut records: Vec<(usize, usize, String)> = Vec::with_capacity(audit_count);
 
-        for raw in corpus.iter().take(audit_count) {
+        for (idx, raw) in corpus.iter().enumerate() {
             let (gt_vendor, gt_template, gt_action) = Self::extract_ground_truth(raw);
 
             let activity = parse_fn(raw);
             let (cluster_id, template_str) = cluster_fn(raw);
+            records.push((idx, cluster_id, gt_template.clone()));
 
-            // 1. Grouping Accuracy tracking
+            // 1. Grouping Accuracy tracking (primary engine clusters)
             *cluster_to_gt_map
                 .entry(cluster_id)
                 .or_default()
                 .entry(gt_template.clone())
                 .or_insert(0) += 1;
 
-            // 2. Template Accuracy tracking: verifies wildcard masking exists
-            if template_str.contains("<*>") || !template_str.is_empty() {
+            // Oracle ceiling clusters (GT-hash identity)
+            let oracle_id = SignatureLruCache::compute_signature_hash(&gt_template) as usize;
+            *oracle_map
+                .entry(oracle_id)
+                .or_default()
+                .entry(gt_template.clone())
+                .or_insert(0) += 1;
+
+            // 2. Template validity (honest TA): exact token-aligned generalization
+            //    of this record's masked line, syslog GT tag preserved. No thresholds.
+            if Self::template_is_valid(raw, &template_str, &gt_template) {
                 template_correct += 1;
+            } else {
+                failures.push(AuditFailure::new(
+                    "template",
+                    idx,
+                    raw,
+                    &gt_template,
+                    &template_str,
+                    cluster_id,
+                ));
             }
 
-            // 3. Vendor Classification Accuracy
-            let parsed_vendor = activity.metadata.product.vendor_name.to_ascii_lowercase();
+            // 3. Vendor Classification Accuracy (explicit label map, never fuzzy)
+            let parsed_vendor_raw = activity.metadata.product.vendor_name.to_ascii_lowercase();
+            let parsed_vendor = Self::map_audit_vendor(&parsed_vendor_raw);
             let expected_vendor = gt_vendor.to_ascii_lowercase();
-            if parsed_vendor.contains(&expected_vendor) || expected_vendor.contains(&parsed_vendor)
-            {
+            if parsed_vendor.contains(&expected_vendor) || expected_vendor.contains(parsed_vendor) {
                 vendor_correct += 1;
+            } else {
+                failures.push(AuditFailure::new(
+                    "vendor",
+                    idx,
+                    raw,
+                    &expected_vendor,
+                    parsed_vendor,
+                    cluster_id,
+                ));
             }
 
             // 4. SHA-256 Digest & UUID
@@ -1091,45 +1281,122 @@ impl EvaluatorEngine {
                 uuid_valid += 1;
             }
 
-            // 5. IP Address Verification
-            if let Some(ref ip) = activity.src_endpoint.ip {
-                if raw.contains(ip) {
-                    src_ip_correct += 1;
-                }
+            // 5. IP Address Verification (a null or raw-absent field counts wrong)
+            match activity.src_endpoint.ip.as_deref() {
+                Some(ip) if raw.contains(ip) => src_ip_correct += 1,
+                other => failures.push(AuditFailure::new(
+                    "src_ip",
+                    idx,
+                    raw,
+                    "ip embedded in raw",
+                    other.unwrap_or("null"),
+                    cluster_id,
+                )),
             }
-            if let Some(ref ip) = activity.dst_endpoint.ip {
-                if raw.contains(ip) {
-                    dst_ip_correct += 1;
-                }
+            match activity.dst_endpoint.ip.as_deref() {
+                Some(ip) if raw.contains(ip) => dst_ip_correct += 1,
+                other => failures.push(AuditFailure::new(
+                    "dst_ip",
+                    idx,
+                    raw,
+                    "ip embedded in raw",
+                    other.unwrap_or("null"),
+                    cluster_id,
+                )),
             }
 
             // 6. Port Verification
-            if let Some(port) = activity.src_endpoint.port {
-                if (1..=65535).contains(&port) && raw.contains(&port.to_string()) {
-                    src_port_correct += 1;
+            match activity.src_endpoint.port {
+                Some(port) if (1..=65535).contains(&port) && raw.contains(&port.to_string()) => {
+                    src_port_correct += 1
                 }
+                other => failures.push(AuditFailure::new(
+                    "src_port",
+                    idx,
+                    raw,
+                    "valid 1-65535 port present in raw",
+                    &other
+                        .map(|p| p.to_string())
+                        .unwrap_or_else(|| "null".to_string()),
+                    cluster_id,
+                )),
             }
-            if let Some(port) = activity.dst_endpoint.port {
-                if (1..=65535).contains(&port) && raw.contains(&port.to_string()) {
-                    dst_port_correct += 1;
+            match activity.dst_endpoint.port {
+                Some(port) if (1..=65535).contains(&port) && raw.contains(&port.to_string()) => {
+                    dst_port_correct += 1
                 }
+                other => failures.push(AuditFailure::new(
+                    "dst_port",
+                    idx,
+                    raw,
+                    "valid 1-65535 port present in raw",
+                    &other
+                        .map(|p| p.to_string())
+                        .unwrap_or_else(|| "null".to_string()),
+                    cluster_id,
+                )),
             }
 
-            // 7. Protocol Verification
+            // 7. Protocol Verification: name match OR numeric IANA equivalence.
+            //    A raw line carrying `proto=17` for an extracted UDP is correct —
+            //    the old name-only `contains` punished proper number mappings.
             if let Some(ref proto) = activity.connection_info.protocol_name {
                 let proto_upper = proto.to_ascii_uppercase();
-                if raw.to_ascii_uppercase().contains(&proto_upper) || proto_upper == "IP" {
+                let name_ok =
+                    raw.to_ascii_uppercase().contains(&proto_upper) || proto_upper == "IP";
+                let num_ok = activity
+                    .connection_info
+                    .protocol_num
+                    .map(|n| Self::raw_contains_numeric(raw, n))
+                    .unwrap_or(false);
+                if name_ok || num_ok {
                     proto_correct += 1;
+                } else {
+                    failures.push(AuditFailure::new(
+                        "protocol",
+                        idx,
+                        raw,
+                        &proto_upper,
+                        "no name or numeric match in raw",
+                        cluster_id,
+                    ));
                 }
+            } else {
+                failures.push(AuditFailure::new(
+                    "protocol",
+                    idx,
+                    raw,
+                    "protocol present",
+                    "null",
+                    cluster_id,
+                ));
             }
 
-            // 8. Disposition Accuracy
+            // 8. Disposition Accuracy (strict equality vs OCSF vocabulary)
             if let Some(ref expected_act) = gt_action {
                 if activity.disposition == *expected_act {
                     disposition_correct += 1;
+                } else {
+                    failures.push(AuditFailure::new(
+                        "disposition",
+                        idx,
+                        raw,
+                        expected_act,
+                        &activity.disposition,
+                        cluster_id,
+                    ));
                 }
             } else if !activity.disposition.is_empty() && activity.disposition != "Unknown" {
                 disposition_correct += 1;
+            } else {
+                failures.push(AuditFailure::new(
+                    "disposition",
+                    idx,
+                    raw,
+                    "non-Unknown disposition",
+                    &activity.disposition,
+                    cluster_id,
+                ));
             }
         }
 
@@ -1138,8 +1405,34 @@ impl EvaluatorEngine {
             .values()
             .map(|gt_counts| gt_counts.values().max().copied().unwrap_or(0))
             .sum();
+        let oracle_ga_total: usize = oracle_map
+            .values()
+            .map(|gt_counts| gt_counts.values().max().copied().unwrap_or(0))
+            .sum();
+        let unique_clusters = cluster_to_gt_map.len();
+
+        // Grouping failures: any record outside its cluster's majority GT class
+        let mut majority: HashMap<usize, String> = HashMap::new();
+        for (cid, counts) in &cluster_to_gt_map {
+            if let Some((tag, _)) = counts.iter().max_by_key(|(_, c)| **c) {
+                majority.insert(*cid, tag.clone());
+            }
+        }
+        for (idx, cid, gt_tag) in &records {
+            if majority.get(cid).is_some_and(|m| m != gt_tag) {
+                failures.push(AuditFailure::new(
+                    "grouping",
+                    *idx,
+                    &corpus[*idx],
+                    gt_tag,
+                    &format!("cluster {}", cid),
+                    *cid,
+                ));
+            }
+        }
 
         let ga_pct = (ga_correct_total as f64 / audit_count as f64) * 100.0;
+        let oracle_ga_pct = (oracle_ga_total as f64 / audit_count as f64) * 100.0;
         let vca_pct = (vendor_correct as f64 / audit_count as f64) * 100.0;
         let ta_pct = (template_correct as f64 / audit_count as f64) * 100.0;
 
@@ -1157,7 +1450,7 @@ impl EvaluatorEngine {
             0.0
         };
 
-        AccuracyAuditSummary {
+        let summary = AccuracyAuditSummary {
             total_audited: audit_count,
             vendor_classification_accuracy_pct: vca_pct,
             grouping_accuracy_ga_pct: ga_pct,
@@ -1172,7 +1465,10 @@ impl EvaluatorEngine {
             action_inviolability_pct: action_inviolability,
             lossless_sha256_match_pct: (sha_matches as f64 / audit_count as f64) * 100.0,
             valid_uuid_v7_pct: (uuid_valid as f64 / audit_count as f64) * 100.0,
-        }
+            oracle_ga_pct,
+            unique_clusters,
+        };
+        (summary, failures)
     }
 
     /// Verify that DrainDotNet anchor tokens preserve action disposition separation

@@ -186,6 +186,11 @@ struct EvaluateArgs {
     /// Optional path to export JSON metrics
     #[arg(long)]
     json_out: Option<PathBuf>,
+
+    /// Optional path to export the per-record audit mismatch dump (JSONL, one
+    /// failure object per line: engine, metric, expected, observed, raw line)
+    #[arg(long)]
+    audit_dump: Option<PathBuf>,
 }
 
 #[tokio::main]
@@ -614,6 +619,7 @@ async fn run_benchmark(args: BenchmarkArgs) -> Result<()> {
             samples: 10000,
             out: PathBuf::from("eval_hardcore_report.md"),
             json_out: None,
+            audit_dump: None,
         };
         return run_evaluate(eval_args).await;
     }
@@ -838,6 +844,38 @@ async fn run_evaluate(args: EvaluateArgs) -> Result<()> {
         println!(
             "[+] Exported evaluation metrics JSON to: \x1b[1;32m{}\x1b[0m",
             json_path.display()
+        );
+    }
+
+    // Export per-record audit mismatch dump (JSONL) — the dependency for
+    // dump-driven Tier-2 tuning (no threshold changes without seeing failures)
+    if let Some(dump_path) = &args.audit_dump {
+        let mut jsonl = String::new();
+        let mut failure_count = 0usize;
+        for result in [report.baseline.as_ref(), report.tiered_pipeline.as_ref()]
+            .into_iter()
+            .flatten()
+        {
+            for f in &result.failures {
+                let line = serde_json::json!({
+                    "engine": result.name,
+                    "metric": f.metric,
+                    "corpus_index": f.corpus_index,
+                    "expected": f.expected,
+                    "observed": f.observed,
+                    "cluster_id": f.cluster_id,
+                    "raw": f.raw,
+                });
+                jsonl.push_str(&line.to_string());
+                jsonl.push('\n');
+                failure_count += 1;
+            }
+        }
+        fs::write(dump_path, jsonl)?;
+        println!(
+            "[+] Exported audit mismatch dump ({} failure records) to: \x1b[1;32m{}\x1b[0m",
+            failure_count,
+            dump_path.display()
         );
     }
 

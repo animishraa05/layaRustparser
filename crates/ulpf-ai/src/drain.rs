@@ -180,6 +180,16 @@ impl Node {
 }
 
 /// High-Performance Native Rust Implementation of Drain3 Log Template Miner
+/// Canonical line masker — the exact masking `DrainMiner::add_log` applies before
+/// clustering. Exposed so the evaluator's Template-Validity audit can verify
+/// template/line token alignment with identical semantics. The compiled regex set
+/// is cached process-wide; the audit loop calls this once per corpus line.
+pub fn mask_line(raw: &str) -> String {
+    use std::sync::OnceLock;
+    static SHARED: OnceLock<LogMasker> = OnceLock::new();
+    SHARED.get_or_init(LogMasker::new).mask(raw)
+}
+
 pub struct DrainMiner {
     config: DrainConfig,
     root: Node,

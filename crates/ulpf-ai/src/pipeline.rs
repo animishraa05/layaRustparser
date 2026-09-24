@@ -172,6 +172,14 @@ impl TieredPipeline {
         }
     }
 
+    /// Current Tier-2 Drain cluster count (real telemetry for evaluator reports)
+    pub fn tier2_cluster_count(&self) -> usize {
+        self.drain
+            .lock()
+            .map(|drain| drain.cluster_count())
+            .unwrap_or(0)
+    }
+
     /// Query multi-tier statistics
     pub fn stats(&self) -> PipelineStats {
         let total = self.total_events.load(Ordering::Relaxed);
