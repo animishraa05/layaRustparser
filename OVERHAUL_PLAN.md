@@ -432,3 +432,40 @@ after a P6 step; p50 ≥ 5.0 µs after any step.
   key patterns → P4 native ports; 113019 37 + ICMP 115 honest nulls → P5
   null-correct rule) · dst_ip/protocol 37 = 113019 honest nulls → P5 ·
   template 108 + grouping 40 → P6.1.
+
+### P4 — native ArcSight CEF extractor
+- **`VendorFormat::Cef` + `extractors/cef.rs`:** header split on `CEF:0|...|`
+  (8 fields), `vendor_name` from the **Device Vendor header field** (what GT
+  reads — never a hardcoded brand), Device Product/Version → `Product`,
+  extension iterated with the shared kv `KvTokenizer` (src/dst/spt/dpt/proto/
+  act/in/out), ICMP keeps ports `None`, `in`/`out` → `Traffic` bytes,
+  signature-id/name/severity → `unmapped` (nothing dropped). Wired into the
+  Aho-Corasick table (`CEF:`), classifier fallback, `parse()` and
+  `parse_with_format()`, plus a single `cef_extension` signature bucket
+  (vendor-neutral envelope = one cached format).
+- **Disposition parity with GT** (`act=`): `accept|allow|allowed → Allowed`,
+  `deny|denied|blocked|block → Blocked`, `drop → Dropped`,
+  `close|closed|timeout|client-rst|server-rst|reset → Allowed (CLOSE)`.
+- **GT vocab completion (ruler fix, pre-P6):** `action_from_kv_token` now
+  resolves `allowed`/`denied` — previously `None` meant the disposition check
+  was silently skipped for those verbs. Corpus has zero such lines (verified),
+  so this makes GT *stricter* without moving any existing number. Both callers
+  are the CEF `act=` and FGT `action=` branches.
+- **Shared-extractor decision (user: "Include them"):** baseline gains the CEF
+  extractor too — its 52 CEF failures vanish identically. Strict wins now live
+  where the engines genuinely differ: GA/TA.
+- **Tests 75 → 81** (+5 extractor unit tests, +`test_cef_parsing_suite` with 6
+  fixtures incl. syslog-prefixed + foreign-vendor lines and byte-for-byte
+  SHA-256 preservation, classifier CEF case). Gate: clippy 0 / fmt ok /
+  workspace **81 passed** (flaky sub-µs benchmark re-ran green alone).
+- **Post-P4 eval:** **VCA 96.00 → 100.00 / 100.00** · **disposition
+  96.00/97.85 → 100.00 / 100.00** (async-onboarding race eliminated — CEF is
+  now native, deterministic) · GA 100.00/96.92 · TA 100.00/91.69 (unchanged →
+  P6.1) · p50 76.74/3.69 µs (<5.0 ✓) · p99.9 184.11/14.54 µs · Action
+  Inviolability 100% · lossless 100% · Tier-3 dispatches 224 → 96 (CEF no
+  longer floods novel-cluster dispatch — first sight is now promoted native) ·
+  Tier-2 clusters 11 · dump 1452 → **904**.
+- **Dump families (both engines, symmetric):** src_port/dst_port 152 (ICMP 115
+  + 113019 37 honest nulls → **P5**), dst_ip 37 + protocol 37 (113019 → P5),
+  vendor/disposition/src_ip families **eliminated**; tiered-only template 108
+  + grouping 40 → **P6.1**.
