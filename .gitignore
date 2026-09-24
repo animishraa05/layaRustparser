@@ -8,4 +8,9 @@
 *.log
 !sample_new_firewall.log
 !data/raw/*
+# P7.6: `*.log` matches at any depth — explicit negations for the new
+# corpus subdirs (sidecars `.jsonl` are unaffected by any rule).
+!data/raw/adversarial/*.log
+!data/raw/holdout/*.log
 audit_dump.jsonl
+audit_adv*.jsonl

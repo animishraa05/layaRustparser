@@ -1,0 +1,120 @@
+<130>Sep 21 14:03:32 asa-vpn-gw01 %ASA-6-713049: Group = contractors, IP = 198.51.100.68, IPsec tunnel established.
+<164>Sep 21 14:03:24 asa-vpn-gw01 %ASA-4-713172: Group = vpn-users, IP = 203.0.113.229, IPsec tunnel, authentication failed from gateway.
+<130>Sep 21 14:04:24 asa-vpn-gw01 %ASA-6-716059: Group = vpn-users, Username = mikrotik-ops, IP = 203.0.113.64, Successful login to server.
+<164>Sep 21 14:04:53 asa-vpn-gw01 %ASA-4-716060: Group = vpn-users, Username = test, IP = 192.0.2.42, authentication failed.
+<130>Sep 21 14:03:44 asa-vpn-gw01 %ASA-6-713041: Group = contractors, IP = 203.0.113.71, IPsec tunnel established.
+<164>Sep 21 14:03:40 asa-vpn-gw01 %ASA-4-713041: Group = guest-wifi, IP = 203.0.113.225, IPsec tunnel, authentication failed from gateway.
+<130>Sep 21 14:04:49 asa-vpn-gw01 %ASA-6-716059: Group = vpn-users, Username = mikrotik-ops, IP = 192.0.2.242, Successful login to server.
+<164>Sep 21 14:04:55 asa-vpn-gw01 %ASA-4-716060: Group = guest-wifi, Username = svc_backup, IP = 192.0.2.103, authentication failed.
+<130>Sep 21 14:03:14 asa-vpn-gw01 %ASA-6-713041: Group = contractors, IP = 203.0.113.67, IPsec tunnel established.
+<164>Sep 21 14:03:50 asa-vpn-gw01 %ASA-4-713041: Group = guest-wifi, IP = 198.51.100.186, IPsec tunnel, authentication failed from gateway.
+<130>Sep 21 14:04:23 asa-vpn-gw01 %ASA-6-716059: Group = network-admins, Username = jdoe, IP = 198.51.100.162, Successful login to server.
+<164>Sep 21 14:04:54 asa-vpn-gw01 %ASA-4-716060: Group = vpn-users, Username = admin, IP = 192.0.2.49, authentication failed.
+<130>Sep 21 14:03:26 asa-vpn-gw01 %ASA-6-713049: Group = remote-admins, IP = 203.0.113.63, IPsec tunnel established.
+<164>Sep 21 14:03:38 asa-vpn-gw01 %ASA-4-713172: Group = vpn-users, IP = 198.51.100.86, IPsec tunnel, authentication failed from gateway.
+<130>Sep 21 14:04:15 asa-vpn-gw01 %ASA-6-716059: Group = vpn-users, Username = mikrotik-ops, IP = 192.0.2.235, Successful login to server.
+<164>Sep 21 14:04:39 asa-vpn-gw01 %ASA-4-716060: Group = guest-wifi, Username = root, IP = 203.0.113.27, authentication failed.
+<130>Sep 21 14:03:14 asa-vpn-gw01 %ASA-6-713049: Group = remote-admins, IP = 203.0.113.237, IPsec tunnel established.
+<164>Sep 21 14:03:13 asa-vpn-gw01 %ASA-4-713041: Group = vpn-users, IP = 198.51.100.129, IPsec tunnel, authentication failed from gateway.
+<130>Sep 21 14:04:24 asa-vpn-gw01 %ASA-6-716059: Group = network-admins, Username = jdoe, IP = 198.51.100.150, Successful login to server.
+<164>Sep 21 14:04:44 asa-vpn-gw01 %ASA-4-716060: Group = guest-wifi, Username = test, IP = 192.0.2.110, authentication failed.
+<130>Sep 21 14:03:12 asa-vpn-gw01 %ASA-6-713049: Group = vpn-users, IP = 198.51.100.82, IPsec tunnel established.
+<164>Sep 21 14:03:38 asa-vpn-gw01 %ASA-4-713041: Group = vpn-users, IP = 203.0.113.185, IPsec tunnel, authentication failed from gateway.
+<130>Sep 21 14:04:44 asa-vpn-gw01 %ASA-6-716059: Group = vpn-users, Username = jdoe, IP = 192.0.2.58, Successful login to server.
+<164>Sep 21 14:04:57 asa-vpn-gw01 %ASA-4-716060: Group = vpn-users, Username = root, IP = 192.0.2.31, authentication failed.
+<130>Sep 21 14:03:45 asa-vpn-gw01 %ASA-6-713049: Group = contractors, IP = 203.0.113.205, IPsec tunnel established.
+<164>Sep 21 14:03:53 asa-vpn-gw01 %ASA-4-713172: Group = vpn-users, IP = 198.51.100.131, IPsec tunnel, authentication failed from gateway.
+<130>Sep 21 14:04:57 asa-vpn-gw01 %ASA-6-716059: Group = network-admins, Username = mikrotik-ops, IP = 198.51.100.244, Successful login to server.
+<164>Sep 21 14:04:21 asa-vpn-gw01 %ASA-4-716060: Group = guest-wifi, Username = test, IP = 192.0.2.218, authentication failed.
+<130>Sep 21 14:03:48 asa-vpn-gw01 %ASA-6-713049: Group = remote-admins, IP = 203.0.113.221, IPsec tunnel established.
+<164>Sep 21 14:03:29 asa-vpn-gw01 %ASA-4-713172: Group = guest-wifi, IP = 203.0.113.95, IPsec tunnel, authentication failed from gateway.
+<130>Sep 21 14:04:51 asa-vpn-gw01 %ASA-6-716059: Group = network-admins, Username = asmith, IP = 203.0.113.88, Successful login to server.
+<164>Sep 21 14:04:59 asa-vpn-gw01 %ASA-4-716060: Group = guest-wifi, Username = svc_backup, IP = 192.0.2.240, authentication failed.
+<130>Sep 21 14:03:51 asa-vpn-gw01 %ASA-6-713041: Group = vpn-users, IP = 203.0.113.130, IPsec tunnel established.
+<164>Sep 21 14:03:27 asa-vpn-gw01 %ASA-4-713041: Group = vpn-users, IP = 192.0.2.71, IPsec tunnel, authentication failed from gateway.
+<130>Sep 21 14:04:18 asa-vpn-gw01 %ASA-6-716059: Group = vpn-users, Username = klee, IP = 203.0.113.201, Successful login to server.
+<164>Sep 21 14:04:37 asa-vpn-gw01 %ASA-4-716060: Group = vpn-users, Username = svc_backup, IP = 198.51.100.56, authentication failed.
+<130>Sep 21 14:03:39 asa-vpn-gw01 %ASA-6-713041: Group = contractors, IP = 203.0.113.182, IPsec tunnel established.
+<164>Sep 21 14:03:49 asa-vpn-gw01 %ASA-4-713172: Group = vpn-users, IP = 203.0.113.220, IPsec tunnel, authentication failed from gateway.
+<130>Sep 21 14:04:18 asa-vpn-gw01 %ASA-6-716059: Group = network-admins, Username = klee, IP = 192.0.2.113, Successful login to server.
+<164>Sep 21 14:04:18 asa-vpn-gw01 %ASA-4-716060: Group = guest-wifi, Username = admin, IP = 198.51.100.61, authentication failed.
+<130>Sep 21 14:03:57 asa-vpn-gw01 %ASA-6-713049: Group = remote-admins, IP = 192.0.2.134, IPsec tunnel established.
+<164>Sep 21 14:03:48 asa-vpn-gw01 %ASA-4-713041: Group = guest-wifi, IP = 198.51.100.170, IPsec tunnel, authentication failed from gateway.
+<130>Sep 21 14:04:48 asa-vpn-gw01 %ASA-6-716059: Group = vpn-users, Username = klee, IP = 198.51.100.91, Successful login to server.
+<164>Sep 21 14:04:41 asa-vpn-gw01 %ASA-4-716060: Group = guest-wifi, Username = test, IP = 192.0.2.69, authentication failed.
+<130>Sep 21 14:03:49 asa-vpn-gw01 %ASA-6-713041: Group = remote-admins, IP = 192.0.2.160, IPsec tunnel established.
+<164>Sep 21 14:03:45 asa-vpn-gw01 %ASA-4-713172: Group = vpn-users, IP = 203.0.113.100, IPsec tunnel, authentication failed from gateway.
+<130>Sep 21 14:04:25 asa-vpn-gw01 %ASA-6-716059: Group = vpn-users, Username = asmith, IP = 203.0.113.232, Successful login to server.
+<164>Sep 21 14:04:46 asa-vpn-gw01 %ASA-4-716060: Group = guest-wifi, Username = test, IP = 198.51.100.208, authentication failed.
+<130>Sep 21 14:03:58 asa-vpn-gw01 %ASA-6-713041: Group = remote-admins, IP = 198.51.100.44, IPsec tunnel established.
+<164>Sep 21 14:03:26 asa-vpn-gw01 %ASA-4-713041: Group = guest-wifi, IP = 198.51.100.4, IPsec tunnel, authentication failed from gateway.
+<130>Sep 21 14:04:14 asa-vpn-gw01 %ASA-6-716059: Group = vpn-users, Username = klee, IP = 198.51.100.10, Successful login to server.
+<164>Sep 21 14:04:28 asa-vpn-gw01 %ASA-4-716060: Group = guest-wifi, Username = admin, IP = 192.0.2.189, authentication failed.
+<130>Sep 21 14:03:28 asa-vpn-gw01 %ASA-6-713049: Group = remote-admins, IP = 203.0.113.62, IPsec tunnel established.
+<164>Sep 21 14:03:29 asa-vpn-gw01 %ASA-4-713172: Group = vpn-users, IP = 203.0.113.163, IPsec tunnel, authentication failed from gateway.
+<130>Sep 21 14:04:16 asa-vpn-gw01 %ASA-6-716059: Group = network-admins, Username = asmith, IP = 203.0.113.247, Successful login to server.
+<164>Sep 21 14:04:42 asa-vpn-gw01 %ASA-4-716060: Group = vpn-users, Username = svc_backup, IP = 192.0.2.159, authentication failed.
+<130>Sep 21 14:03:12 asa-vpn-gw01 %ASA-6-713049: Group = vpn-users, IP = 192.0.2.100, IPsec tunnel established.
+<164>Sep 21 14:03:32 asa-vpn-gw01 %ASA-4-713172: Group = vpn-users, IP = 192.0.2.46, IPsec tunnel, authentication failed from gateway.
+<130>Sep 21 14:04:28 asa-vpn-gw01 %ASA-6-716059: Group = network-admins, Username = jdoe, IP = 203.0.113.56, Successful login to server.
+<164>Sep 21 14:04:27 asa-vpn-gw01 %ASA-4-716060: Group = guest-wifi, Username = admin, IP = 203.0.113.140, authentication failed.
+<130>Sep 21 14:03:40 asa-vpn-gw01 %ASA-6-713041: Group = contractors, IP = 192.0.2.196, IPsec tunnel established.
+<164>Sep 21 14:03:47 asa-vpn-gw01 %ASA-4-713172: Group = vpn-users, IP = 203.0.113.121, IPsec tunnel, authentication failed from gateway.
+<130>Sep 21 14:04:27 asa-vpn-gw01 %ASA-6-716059: Group = vpn-users, Username = klee, IP = 198.51.100.83, Successful login to server.
+<164>Sep 21 14:04:15 asa-vpn-gw01 %ASA-4-716060: Group = guest-wifi, Username = test, IP = 203.0.113.203, authentication failed.
+<130>Sep 21 14:03:37 asa-vpn-gw01 %ASA-6-713041: Group = vpn-users, IP = 203.0.113.245, IPsec tunnel established.
+<164>Sep 21 14:03:45 asa-vpn-gw01 %ASA-4-713041: Group = vpn-users, IP = 198.51.100.149, IPsec tunnel, authentication failed from gateway.
+<130>Sep 21 14:04:50 asa-vpn-gw01 %ASA-6-716059: Group = network-admins, Username = asmith, IP = 192.0.2.191, Successful login to server.
+<164>Sep 21 14:04:21 asa-vpn-gw01 %ASA-4-716060: Group = guest-wifi, Username = svc_backup, IP = 203.0.113.113, authentication failed.
+<130>Sep 21 14:03:12 asa-vpn-gw01 %ASA-6-713041: Group = remote-admins, IP = 198.51.100.57, IPsec tunnel established.
+<164>Sep 21 14:03:26 asa-vpn-gw01 %ASA-4-713172: Group = vpn-users, IP = 198.51.100.2, IPsec tunnel, authentication failed from gateway.
+<130>Sep 21 14:04:10 asa-vpn-gw01 %ASA-6-716059: Group = vpn-users, Username = asmith, IP = 203.0.113.223, Successful login to server.
+<164>Sep 21 14:04:50 asa-vpn-gw01 %ASA-4-716060: Group = guest-wifi, Username = test, IP = 198.51.100.145, authentication failed.
+<130>Sep 21 14:03:19 asa-vpn-gw01 %ASA-6-713041: Group = remote-admins, IP = 192.0.2.150, IPsec tunnel established.
+<164>Sep 21 14:03:25 asa-vpn-gw01 %ASA-4-713172: Group = vpn-users, IP = 203.0.113.36, IPsec tunnel, authentication failed from gateway.
+<130>Sep 21 14:04:24 asa-vpn-gw01 %ASA-6-716059: Group = vpn-users, Username = mikrotik-ops, IP = 203.0.113.27, Successful login to server.
+<164>Sep 21 14:04:52 asa-vpn-gw01 %ASA-4-716060: Group = vpn-users, Username = svc_backup, IP = 203.0.113.41, authentication failed.
+<130>Sep 21 14:03:22 asa-vpn-gw01 %ASA-6-713041: Group = contractors, IP = 192.0.2.97, IPsec tunnel established.
+<164>Sep 21 14:03:50 asa-vpn-gw01 %ASA-4-713172: Group = vpn-users, IP = 203.0.113.82, IPsec tunnel, authentication failed from gateway.
+<130>Sep 21 14:04:49 asa-vpn-gw01 %ASA-6-716059: Group = network-admins, Username = asmith, IP = 198.51.100.237, Successful login to server.
+<164>Sep 21 14:04:35 asa-vpn-gw01 %ASA-4-716060: Group = guest-wifi, Username = svc_backup, IP = 198.51.100.42, authentication failed.
+<130>Sep 21 14:03:45 asa-vpn-gw01 %ASA-6-713049: Group = contractors, IP = 203.0.113.7, IPsec tunnel established.
+<164>Sep 21 14:03:57 asa-vpn-gw01 %ASA-4-713041: Group = vpn-users, IP = 192.0.2.25, IPsec tunnel, authentication failed from gateway.
+<130>Sep 21 14:04:18 asa-vpn-gw01 %ASA-6-716059: Group = network-admins, Username = klee, IP = 192.0.2.108, Successful login to server.
+<164>Sep 21 14:04:22 asa-vpn-gw01 %ASA-4-716060: Group = guest-wifi, Username = root, IP = 203.0.113.8, authentication failed.
+<130>Sep 21 14:03:13 asa-vpn-gw01 %ASA-6-713041: Group = remote-admins, IP = 203.0.113.201, IPsec tunnel established.
+<164>Sep 21 14:03:27 asa-vpn-gw01 %ASA-4-713041: Group = vpn-users, IP = 192.0.2.76, IPsec tunnel, authentication failed from gateway.
+<130>Sep 21 14:04:25 asa-vpn-gw01 %ASA-6-716059: Group = vpn-users, Username = jdoe, IP = 203.0.113.178, Successful login to server.
+<164>Sep 21 14:04:38 asa-vpn-gw01 %ASA-4-716060: Group = vpn-users, Username = root, IP = 203.0.113.95, authentication failed.
+<130>Sep 21 14:03:32 asa-vpn-gw01 %ASA-6-713041: Group = remote-admins, IP = 203.0.113.128, IPsec tunnel established.
+<164>Sep 21 14:03:45 asa-vpn-gw01 %ASA-4-713041: Group = guest-wifi, IP = 198.51.100.167, IPsec tunnel, authentication failed from gateway.
+<130>Sep 21 14:04:14 asa-vpn-gw01 %ASA-6-716059: Group = vpn-users, Username = mikrotik-ops, IP = 203.0.113.44, Successful login to server.
+<164>Sep 21 14:04:20 asa-vpn-gw01 %ASA-4-716060: Group = guest-wifi, Username = test, IP = 198.51.100.41, authentication failed.
+<130>Sep 21 14:03:42 asa-vpn-gw01 %ASA-6-713049: Group = vpn-users, IP = 192.0.2.48, IPsec tunnel established.
+<164>Sep 21 14:03:44 asa-vpn-gw01 %ASA-4-713041: Group = vpn-users, IP = 203.0.113.79, IPsec tunnel, authentication failed from gateway.
+<130>Sep 21 14:04:58 asa-vpn-gw01 %ASA-6-716059: Group = network-admins, Username = asmith, IP = 192.0.2.137, Successful login to server.
+<164>Sep 21 14:04:55 asa-vpn-gw01 %ASA-4-716060: Group = vpn-users, Username = svc_backup, IP = 192.0.2.122, authentication failed.
+<130>Sep 21 14:03:30 asa-vpn-gw01 %ASA-6-713041: Group = remote-admins, IP = 203.0.113.75, IPsec tunnel established.
+<164>Sep 21 14:03:30 asa-vpn-gw01 %ASA-4-713041: Group = vpn-users, IP = 192.0.2.185, IPsec tunnel, authentication failed from gateway.
+<130>Sep 21 14:04:16 asa-vpn-gw01 %ASA-6-716059: Group = vpn-users, Username = jdoe, IP = 203.0.113.226, Successful login to server.
+<164>Sep 21 14:04:41 asa-vpn-gw01 %ASA-4-716060: Group = guest-wifi, Username = test, IP = 198.51.100.73, authentication failed.
+<130>Sep 21 14:03:57 asa-vpn-gw01 %ASA-6-713049: Group = contractors, IP = 192.0.2.167, IPsec tunnel established.
+<164>Sep 21 14:03:19 asa-vpn-gw01 %ASA-4-713041: Group = guest-wifi, IP = 192.0.2.235, IPsec tunnel, authentication failed from gateway.
+<130>Sep 21 14:04:58 asa-vpn-gw01 %ASA-6-716059: Group = vpn-users, Username = asmith, IP = 192.0.2.141, Successful login to server.
+<164>Sep 21 14:04:57 asa-vpn-gw01 %ASA-4-716060: Group = vpn-users, Username = root, IP = 203.0.113.205, authentication failed.
+<130>Sep 21 14:03:56 asa-vpn-gw01 %ASA-6-713049: Group = vpn-users, IP = 198.51.100.142, IPsec tunnel established.
+<164>Sep 21 14:03:45 asa-vpn-gw01 %ASA-4-713041: Group = guest-wifi, IP = 198.51.100.161, IPsec tunnel, authentication failed from gateway.
+<130>Sep 21 14:04:49 asa-vpn-gw01 %ASA-6-716059: Group = vpn-users, Username = asmith, IP = 198.51.100.190, Successful login to server.
+<164>Sep 21 14:04:58 asa-vpn-gw01 %ASA-4-716060: Group = guest-wifi, Username = svc_backup, IP = 192.0.2.182, authentication failed.
+<130>Sep 21 14:03:17 asa-vpn-gw01 %ASA-6-713041: Group = contractors, IP = 192.0.2.162, IPsec tunnel established.
+<164>Sep 21 14:03:55 asa-vpn-gw01 %ASA-4-713041: Group = guest-wifi, IP = 198.51.100.143, IPsec tunnel, authentication failed from gateway.
+<130>Sep 21 14:04:44 asa-vpn-gw01 %ASA-6-716059: Group = vpn-users, Username = klee, IP = 203.0.113.177, Successful login to server.
+<164>Sep 21 14:04:43 asa-vpn-gw01 %ASA-4-716060: Group = guest-wifi, Username = admin, IP = 203.0.113.206, authentication failed.
+<130>Sep 21 14:03:24 asa-vpn-gw01 %ASA-6-713041: Group = remote-admins, IP = 203.0.113.172, IPsec tunnel established.
+<164>Sep 21 14:03:41 asa-vpn-gw01 %ASA-4-713172: Group = guest-wifi, IP = 198.51.100.226, IPsec tunnel, authentication failed from gateway.
+<130>Sep 21 14:04:12 asa-vpn-gw01 %ASA-6-716059: Group = vpn-users, Username = mikrotik-ops, IP = 203.0.113.98, Successful login to server.
+<164>Sep 21 14:04:49 asa-vpn-gw01 %ASA-4-716060: Group = vpn-users, Username = test, IP = 198.51.100.134, authentication failed.
+<130>Sep 21 14:03:27 asa-vpn-gw01 %ASA-6-713049: Group = vpn-users, IP = 198.51.100.243, IPsec tunnel established.
+<164>Sep 21 14:03:58 asa-vpn-gw01 %ASA-4-713172: Group = vpn-users, IP = 192.0.2.8, IPsec tunnel, authentication failed from gateway.
+<130>Sep 21 14:04:54 asa-vpn-gw01 %ASA-6-716059: Group = vpn-users, Username = klee, IP = 198.51.100.241, Successful login to server.
+<164>Sep 21 14:04:24 asa-vpn-gw01 %ASA-4-716060: Group = guest-wifi, Username = admin, IP = 203.0.113.97, authentication failed.
