@@ -1124,6 +1124,25 @@ fn test_p7_gt_tag_refinements_and_vpn_aaa_vocab() {
     let vpn_fail = "<164>Sep 21 14:03:12 asa-vpn-gw01 %ASA-4-713172: Group = vpn-users, IP = 198.51.100.77, IPsec tunnel, authentication failed from gateway.";
     let (_, _, act) = EvaluatorEngine::extract_ground_truth(vpn_fail);
     assert_eq!(act.as_deref(), Some("Blocked"));
+
+    // P8 merge rec #1 lockstep: GT must resolve `session disconnected` to
+    // Allowed exactly like the engine fallback (`parser_tests.rs::test_asa_
+    // fallback_session_disconnected_phrase`), failure phrases still first.
+    let disc = "<130>Sep 21 14:05:00 asa-vpn-gw01 %ASA-6-713104: Group = vpn-users, IP = 198.51.100.77, Session disconnected.";
+    let (_, _, act) = EvaluatorEngine::extract_ground_truth(disc);
+    assert_eq!(
+        act.as_deref(),
+        Some("Allowed"),
+        "GT must expect Allowed for a session-disconnect line"
+    );
+
+    let disc_fail = "<164>Sep 21 14:05:01 asa-vpn-gw01 %ASA-4-716060: Group = vpn-users, IP = 198.51.100.77, Session disconnected after authentication failed.";
+    let (_, _, act) = EvaluatorEngine::extract_ground_truth(disc_fail);
+    assert_eq!(
+        act.as_deref(),
+        Some("Blocked"),
+        "failure phrase must outrank the disconnect phrase on the GT side too"
+    );
 }
 
 /// P7.2 GA safety net: class partitions must never merge — kv `type=` values

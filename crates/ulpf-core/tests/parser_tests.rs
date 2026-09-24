@@ -584,6 +584,41 @@ fn test_p7_asa_vpn_aaa_verdict_phrases() {
     );
 }
 
+/// P8 merge rec #1 (counterpart union): a session-disconnect line on a
+/// NON-113019 message code falls through to `fallback_parse`, whose verdict
+/// vocabulary lacked `session disconnected` — emitting UNKNOWN where the
+/// 113019 branch (and now the shared fallback + GT) say Allowed. Mirrors
+/// `test_p7_asa_vpn_aaa_verdict_phrases`: engine half; GT half lives in
+/// `ai_tests.rs::test_gt_asa_session_disconnected_phrase_lockstep`.
+#[test]
+fn test_asa_fallback_session_disconnected_phrase() {
+    let parser = UniversalParser::new();
+
+    // Non-113019 code (713104) with the disconnect phrase -> Allowed.
+    let disc = "<130>Sep 21 14:05:00 asa-vpn-gw01 %ASA-6-713104: Group = vpn-users, IP = 198.51.100.77, Session disconnected.";
+    let ev = parser.parse(disc).expect("parse fallback disconnect");
+    assert_eq!(
+        ev.disposition,
+        disposition::ALLOWED,
+        "session disconnected (non-113019) must read Allowed, not Unknown"
+    );
+    assert_eq!(
+        ev.metadata.raw_hash,
+        hex::encode(Sha256::digest(disc.as_bytes()))
+    );
+
+    // Failure phrases still win first: a line carrying both reads Blocked.
+    let disc_fail = "<164>Sep 21 14:05:01 asa-vpn-gw01 %ASA-4-716060: Group = vpn-users, IP = 198.51.100.77, Session disconnected after authentication failed.";
+    let ev = parser
+        .parse(disc_fail)
+        .expect("parse fallback disconnect+fail");
+    assert_eq!(
+        ev.disposition,
+        disposition::BLOCKED,
+        "failure phrase must outrank the disconnect phrase"
+    );
+}
+
 /// Full-dataset run finding: `%ASA-4-106007: dropped <proto> from
 /// <ip>/<port> to <ip>/<port>, access-list ... denied ...` misses
 /// `REGEX_DENIED_CONN` (which needs the literal `... connection denied

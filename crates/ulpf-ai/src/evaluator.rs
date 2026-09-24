@@ -1201,6 +1201,10 @@ impl EvaluatorEngine {
                     || raw.contains("permit")
                     || lower.contains("successful login")
                     || lower.contains("tunnel established")
+                    // P8 merge rec #1 lockstep: engine fallback reads a
+                    // session-disconnect as Allowed; GT must expect the same
+                    // or the disposition audit grades a correct line wrong.
+                    || lower.contains("session disconnected")
                 {
                     Some("Allowed".to_string())
                 } else if raw.contains("Deny") || raw.contains("drop") {

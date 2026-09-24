@@ -369,6 +369,11 @@ impl CiscoAsaExtractor {
             || body.contains("Teardown")
             || body_lower.contains("successful login")
             || body_lower.contains("tunnel established")
+            // P8 merge rec #1 (counterpart union): a disconnect on a
+            // non-113019 code is a normal end of permitted traffic -> Allowed
+            // (OCSF), matching the 113019 branch. After the failure phrases
+            // so a line carrying both still reads Blocked.
+            || body_lower.contains("session disconnected")
         {
             disposition::ALLOWED
         } else if body.contains("Deny") || body.contains("denied") {
