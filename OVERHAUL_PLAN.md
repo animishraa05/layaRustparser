@@ -716,3 +716,32 @@ header correct); core stays dump 0 throughout.
 P1–P8 complete: gate clippy 0 / fmt ok / 94 tests (93 + 1 holdout
 executed once at freeze), core dump 0, Action Inviolability 100% on
 every corpus, three-column scorecard above.
+
+### P9 — full-dataset end-to-end validation (post-plan; see `FULL_DATASET_RESULTS.md`)
+
+- **Dataset:** `gen_adversarial.py --full 1200` (seed 777, gitignored) —
+  10,799 clean lines / 9 files / 9.2 MB + sidecar, md5-deterministic.
+  `--corpus core` now loads `data_dir/gt.jsonl` when present (sidecar-
+  authoritative grading; default `data/raw` behavior unchanged).
+- **Two dump-driven findings, both fixed (engine right / GT wrong sorted out):**
+  1. ASA 106007 `dropped <proto> from … to …` missed `REGEX_DENIED_CONN`
+     → default endpoints. New `REGEX_DROPPED_ACL` branch (RED→GREEN,
+     direction honest-null). Full dump 1440 → **0**, F1 98.67 → 100;
+     adversarial dump 544 → 382, F1 95.01 → 97.15.
+  2. `fgt_kv()` hardcoded `proto_gt` while writing a random `proto=6|17` —
+     sidecar contradicted its own raw ~50% of the time (603 protocol
+     wrongs). Engine was correct; generator now mirrors the line
+     (`proto_gt = proto[1]`). Full wrongs 603 → **0** (48000/48000).
+- **New audit diagnostics:** `gt_wrong_by_key` (BTreeMap) row in the 1b
+  scorecard localizes sidecar mismatches per key; hermetic
+  `test_full_dataset_protocol_parity_when_generated` pins line↔GT
+  protocol parity when the full corpus exists.
+- **Live chain:** 8,016 events → 100% OCSF → 8 Merkle blocks + ledger,
+  peak 1,703 EPS; verify **8/8 PASS**; tamper leaf-0 detected
+  (`DigestMismatch`), control block stays green; inspect shows
+  UUIDv7/SHA-256/lossless raw. Onboarder synthesized a novel PORTSEC
+  format in 2.48 ms (100% validation, JSON+YAML out).
+- **Scorecard:** full = all-100 both engines, p50 2.46 µs, templates
+  8056 → 32 (252×), sidecar 48000/48000, dump 0.
+- **Gate:** clippy 0 / fmt ok / 95 + 1 ignored. Full evidence, exact
+  commands, and honest limitations: `FULL_DATASET_RESULTS.md`.
