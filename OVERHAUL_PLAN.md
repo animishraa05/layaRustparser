@@ -359,3 +359,29 @@ after a P6 step; p50 ≥ 5.0 µs after any step.
   corpus, so `GA ≥ baseline` requires tiered GA = 100 (zero cross-tag merges). The dump
   shows the only cross-tag merges are ASA message codes → P6.1 message-code anchoring is
   both necessary and plausibly sufficient for the GA bar.
+
+### P2 — dump-driven extractor fixes + Tier-3 onboarding (committed `d8de390`)
+- **Extractors:** ASA `%ASA-4-113019` branch (peer IP → src endpoint, honest null
+  ports/protocol, username/group/session/duration/reason → unmapped, xmt/rcv → Traffic,
+  ALLOWED+CLOSE); PAN + FGT ICMP → ports `None` (never `Some(0)`); FGT zero-port cleanup.
+- **Tier-3 made possible:** exemplar budget 8/format key (was exactly 1 — `generate_parser`
+  needs ≥3, so `tier3_laya_onboarded` was structurally impossible at 0), worker-side
+  per-key buffer with `report.passed && match_percentage == 100.0` gate + retry-to-cap,
+  budget key = Tier-1 signature hash on **all three** `process()` paths (LRU promotion was
+  starving exemplar collection at 2 samples), tier-1 fast path gated by one atomic read
+  (`exemplar_budget_open`), heads wired → `laya_action_flags`/`laya_threat_flags`.
+- **Onboarder:** `IpAddr::from_str`, 3rd+ ip/port columns unnamed (duplicate group names
+  failed `Regex::new`), kv action capture tolerates quotes+hyphens (`action="client-rst"`).
+- **Laya:** fingerprint priors weight 10.0 vs structural 4.0 (was flat 2.5).
+- **+9 tests** (71 total). Gate: clippy 0 / fmt ok / workspace ok.
+- **Post-P2 eval (release, all engines, 1300 records):** VCA 96.00/96.00 · GA
+  100.00/96.92 · TA 100.00/91.69 · **disposition 93.15 → 96.00/96.00** (+37 113019, both
+  engines share the extractor) · src_ip dump-failures 89 → 52 (CEF only, →P4) ·
+  p50 67.75/3.45 µs (tiered gate <5.0 ✓) · LRU 95.99% (gate >90 ✓) · Action Inviolability
+  100% · lossless 100% · Tier-2 clusters 19 · Tier-3 dispatches 224 · dump 1780 → **1632**
+  (exact predicted −148 = (src_ip 37 + disposition 37)×2 engines).
+- **Remaining dump families:** vendor 52 (CEF→P4) · dst_ip 89 = CEF 52 + 113019 37 ·
+  ports 204 = CEF 52 + 113019 37 + ICMP 115 (honest nulls — audit `None` branch is an
+  unconditional fail → P5 null-correct rule, generalized from the pre-registered
+  "ICMP None audited as correct") · protocol 89 = CEF 52 + 113019 37 (same P5 family) ·
+  template 108 + grouping 40 (→P6.1).
