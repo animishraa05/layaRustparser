@@ -332,3 +332,30 @@ after a P6 step; p50 ≥ 5.0 µs after any step.
    `git checkout -- data/` if hit.
 4. Commit per phase (or per gated step in P6) with the metric delta in the message.
 5. No network at runtime; fetch scripts are explicit dev-time invocations only.
+
+## 8. Execution log (append-only)
+
+### P1 — rulers fixed (`ef046e6`, corrections `f1e4f23`)
+- Implemented every P1 item: label map, exact TA (`template_is_valid`: tokenize-identical
+  token alignment + GT syslog-tag containment), full-corpus audit, fair naive baseline
+  (full-content `DefaultHasher` over `mask_line`), oracle ceiling column, `--audit-dump`
+  JSONL, real tier2 telemetry, IANA numeric protocol equivalence, OCSF GT dispositions
+  (deny→Blocked, FGT session-end→Allowed incl. `timeout` engine arm, CEF GT branch,
+  PAN positional action), `mask_line` exposed from `drain.rs`, `tier2_cluster_count()`
+  accessor, 6 new ruler tests.
+- **First dump run found 3 defects** (fixed in `f1e4f23`): (a) my TA check compared
+  tokenized masked-line vs `split_whitespace` template → baseline fake-fail 802×;
+  (b) baseline cluster key used the LRU **structural signature hash** (vendor + selected
+  tokens) → merged all Suricata JSON into one cluster — the sole baseline GA impurity;
+  (c) GT keyed Suricata only on `event_type` while EVE `action` (blocked/allowed) is
+  authoritative → 43×2 spurious disposition failures.
+- **Dump-confirmed failure families awaiting later phases:** vendor 52 (CEF→P4),
+  protocol/ip 89 (CEF 52 + ASA 113019 37→P2/P4), ports 204/engine (CEF 52 + 113019 37 +
+  ICMP 115→P2 extractor + P5 null-correct audit rule), disposition 132 (CEF 52 + 113019 37
+  + Suricata action 43), tiered template 108 = **100% GT-tag-wildcarded** (ASA message-code
+  cross-merges → P6.1 dynamic syslog-code anchors), tiered grouping 40 = ASA code merges
+  only (no Suricata cross-merges — length bucketing holds).
+- Success-criterion note: with a correct naive baseline, baseline GA → 100.00 on the clean
+  corpus, so `GA ≥ baseline` requires tiered GA = 100 (zero cross-tag merges). The dump
+  shows the only cross-tag merges are ASA message codes → P6.1 message-code anchoring is
+  both necessary and plausibly sufficient for the GA bar.
