@@ -620,3 +620,99 @@ after a P6 step; p50 ≥ 5.0 µs after any step.
 - **Tests 85 → 94** (93 passed + 1 `#[ignore]` frozen holdout). Gate:
   clippy 0 / fmt ok / workspace green; the C2 snapshot state was
   separately stash-verified green (clippy 0 / fmt ok / 25+13 tests).
+
+### P8 — freeze: three-column scorecard, holdout executed, attribution (`freeze`)
+
+**Freeze executed.** `cargo test -p ulpf-ai --test ai_tests
+test_holdout_novelty_end_to_end_at_freeze -- --ignored` → **1 passed**
+(first and only execution of the 200-line MikroTik/Juniper/ZypherFire
+holdout; sidecar `data/raw/holdout/gt.jsonl` authoritative). All three
+corpora re-evaluated in one cool-state freeze session (release build).
+
+**Three-column scorecard (criterion 5) — Baseline / 3-Tier:**
+
+| Metric | Core (1720, clean) | Adversarial (757, mutated) | Holdout (200, novel) |
+| :--- | :--- | :--- | :--- |
+| VCA % | 100.00 / 100.00 | 96.30 / 96.30 | 0.00 / **40.00** |
+| GA % | 100.00 / 100.00 | 100.00 / 98.41† | 100.00 / 100.00 |
+| TA % | 100.00 / 100.00 | 100.00 / 100.00 | 100.00 / 100.00 |
+| Macro F1 % | 100.00 / 100.00 | 95.01 / 95.01 | 64.00 / **80.00** |
+| Disposition % | 100.00 / 100.00 | 93.53 / 93.53 | 0.00 / 0.00‡ |
+| Action Inviolability | N/A / **100%** | N/A / **100%** | N/A / **100%** |
+| Lossless (SHA-256) | 1720/1720 | 757/757 | 200/200 |
+| p50 (µs) | 76.60 / **3.16** | 76.83 / **2.96** | 74.47 / **5.63**§ |
+| Unique templates | 1407 / **73** | 625 / **81** | 45 / **6** |
+| Audit dump (records) | **0** | 544 (expected) | 1280 (expected) |
+| Format recognized | 1720/1720 | 729/757 | 0 → **80/200** |
+| GT fields correct/wrong/null | — (in-line) | 1467/1643/675 | 0/720/280 → **320/400/280** |
+
+† The 12 tiered grouping failures are all `panos_threat` relay/encoding
+mutants; cross-class check = **zero ALLOW/DENY-class mixing** (deny-side
+dispositions only) — adversarial GA is compared against baseline, not
+required to be 100, per the P7 gate.
+‡ Novel formats have no extractor ⇒ no action evidence; honest 0/0 for
+**both** engines — never faked.
+§ Every holdout line misses the LRU by design (novelty corpus), so
+Tier-2/Tier-3 paths dominate; the p50 < 5.0 µs gate is defined on the
+core corpus (3.16 ✓). Baseline sits at 74–77 µs everywhere.
+Robustness/1b sections render in all three reports (`corpus_kind`
+header correct); core stays dump 0 throughout.
+
+**End-of-race attribution (reads now permitted):**
+
+- *Counterpart* (`/home/ani/parser`, HEAD `5dedce8` — our root commit
+  `9d11d2a` is the rsync snapshot of this tree; their store predates our
+  `git init`): **zero code commits**; work is uncommitted — 11 files,
+  +344/−273: `AGENTS.md` (−212 gut), `evaluator.rs` +65,
+  `laya.rs`/`onboarder.rs`/`pipeline.rs` (+219 combined),
+  `main.rs` +10 (drops duplicate short `-d` from `data_dir` — fixes the
+  debug-panic gotcha — plus an `audit_dump: bool` flag), extractors
+  `cisco_asa` (phrase set, allow-branch first), `fortigate` +
+  `paloalto` (ICMP port nulling), `pfsense` (**re-lays the v6 row to
+  `[14]/[15]/[16]/[17]/[18]/[19]`**), `parser_tests.rs` +70; plus 19
+  untracked `patch_*.py`/`fix_*.py` driver scripts. 3 earlier commits
+  are docs/data only.
+- *This track*: 12 commits (`9d11d2a` → `a123a53` plan → P1–P7 + P8),
+  31 files, +7411/−252 — full v3 spine (dump-driven extractors, Tier-3
+  bounded dispatch/promotion, native CEF, dynamic anchors, sidecar/robustness
+  evaluator, `--corpus` CLI), the deferred corpus work (generator,
+  4 expansion fixtures, adversarial + holdout), and the
+  differential/audit harness.
+
+**Merge recommendations (union where both, spec where contested):**
+
+1. `cisco_asa.rs` — **union**: keep failure-phrases-first ordering
+   (a line can carry both a tunnel and a failed auth), add their
+   `"session disconnected" → Allowed` phrase. Their allow-first order
+   mishandles combined lines.
+2. `fortigate.rs` — **both**: our blocked/allowed/closed/reset vocab
+   parity + their ICMP (proto 1) port nulling (orthogonal, good catch).
+3. `paloalto.rs` — **take theirs** (ICMP port nulling; we never touched
+   the file).
+4. `pfsense.rs` — **reject their v6 re-layout**: `[14]` is the
+   `<length>` field per the official Netgate BNF (9 common + class,
+   flow-label, hop-limit, proto-text `[12]`, proto-id `[13]`, length
+   `[14]`, src `[15]`, dst `[16]`, ports `[17]/[18]`). Their shift
+   matches the same *v4-intermediate generator bug* we corrected on the
+   fixture side; baseline engine layout is correct and is pinned by
+   `test_p7_pfsense_ipv6_row`. Their conflicting v6 test assertions
+   must be dropped.
+5. `main.rs` — **ours + their one-liner**: keep `--audit-dump <path>`
+   + `--corpus`; adopt the short-`-d` removal on `data_dir` (kills the
+   debug `evaluate`/`benchmark` clap panic); drop their
+   `audit_dump: bool` (superseded).
+6. `evaluator.rs` — **ours supersedes** (sidecar GT, robustness,
+   null-vs-wrong, GT refinements, dump path). Their telemetry/TA/baseline
+   patches parallel our P2–P6 work; cherry-pick telemetry fields only if
+   wanted after re-gate.
+7. `laya.rs` / `onboarder.rs` / `pipeline.rs` — **take theirs wholesale**
+   (no overlap on this track; re-run the full gate + all three evals
+   after merging).
+8. `parser_tests.rs` — **union, ours wins the v6 conflict**; re-validate
+   their remaining tests against the post-merge engine.
+9. `AGENTS.md` — keep this track's handbook (operative verification gate).
+
+**Success-bar status after P8: criteria 1–6 all ✓.** Overhaul plan
+P1–P8 complete: gate clippy 0 / fmt ok / 94 tests (93 + 1 holdout
+executed once at freeze), core dump 0, Action Inviolability 100% on
+every corpus, three-column scorecard above.

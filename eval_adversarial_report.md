@@ -1,6 +1,6 @@
 # ULPF Hardcore Architectural & Accuracy Telemetry Report
 
-**Timestamp:** 2026-09-24T09:30:16.071805046+00:00  
+**Timestamp:** 2026-09-24T09:41:59.599229068+00:00  
 **Environment:** Linux (x86_64, 16 Cores) | **Workers:** 16 parallel threads  
 **Duration:** 3s per engine | **Corpus:** 757 logs (326.88 KB)  
 **Corpus Kind:** `adversarial` (core = fixed file set, adversarial/holdout = sidecar-GT corpora)  
@@ -11,10 +11,10 @@
 
 | Benchmark Dimension | Baseline (`UniversalParser`) | 3-Tier (`LRU+Drain+Laya`) | Speedup / Delta |
 | :--- | :---: | :---: | :---: |
-| **Throughput (EPS)** | **849225 EPS** | **735181 EPS** | **0.87x** |
-| **Data Bandwidth (MB/s)** | **357.80 MB/s** | **309.67 MB/s** | **0.87x** |
-| **Median Latency (p50)** | 76.87 µs | **2.85 µs** | **-96.3%** |
-| **99th %ile Latency (p99)** | 115.56 µs | **8.28 µs** | **-92.8%** |
+| **Throughput (EPS)** | **830410 EPS** | **749848 EPS** | **0.90x** |
+| **Data Bandwidth (MB/s)** | **349.89 MB/s** | **315.96 MB/s** | **0.90x** |
+| **Median Latency (p50)** | 76.83 µs | **2.96 µs** | **-96.1%** |
+| **99th %ile Latency (p99)** | 119.30 µs | **8.75 µs** | **-92.7%** |
 | **Vendor Classification (VCA)** | **96.30%** | **96.30%** | Ground-Truth Exact Match |
 | **Grouping Accuracy (GA %)** | **100.00%** | **98.41%** | Loghub-2.0 Standard |
 | **Template Accuracy (TA %)** | **100.00%** | **100.00%** | Template Validity (generalization-correct vs masked line) |
@@ -41,12 +41,12 @@
 
 | Percentile Observation | Baseline (µs) | 3-Tier Engine (µs) | Latency Reduction |
 | :--- | :---: | :---: | :---: |
-| **p1 (Fastest 1%)** | 68.77 µs | 1.55 µs | -97.7% |
-| **p50 (Median)** | 76.87 µs | 2.85 µs | -96.3% |
-| **p90** | 88.77 µs | 5.14 µs | -94.2% |
-| **p99** | 115.56 µs | 8.28 µs | -92.8% |
-| **p99.9 (Three Nines)** | 144.13 µs | 15.88 µs | -89.0% |
-| **Worst Case (Max)** | 215.72 µs | 35.21 µs | -83.7% |
+| **p1 (Fastest 1%)** | 68.63 µs | 1.56 µs | -97.7% |
+| **p50 (Median)** | 76.83 µs | 2.96 µs | -96.1% |
+| **p90** | 89.92 µs | 5.28 µs | -94.1% |
+| **p99** | 119.30 µs | 8.75 µs | -92.7% |
+| **p99.9 (Three Nines)** | 150.01 µs | 14.41 µs | -90.4% |
+| **Worst Case (Max)** | 223.23 µs | 31.70 µs | -85.8% |
 
 ## 3. Academic Accuracy & Quality Breakdown
 
