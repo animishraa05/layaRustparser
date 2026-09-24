@@ -555,3 +555,68 @@ after a P6 step; p50 ≥ 5.0 µs after any step.
 - **Tests 84 → 85** (`test_drain_syslog_message_code_anchors`; kv section
   added to the existing anchor test). Gate: clippy 0 / fmt ok / workspace
   green (85 tests).
+
+### P7 — corpora, sidecar GT, class anchors, robustness (`11d9d08`, `714523e`, `fd07a9d`)
+- **P7.1 deterministic corpora:** `scripts/gen_adversarial.py` (seed 1337,
+  holdout 9090 — deliberately ≠ 42; two full runs md5-identical). 757
+  adversarial records over 5 vendor bases × 6 mutation classes
+  (clean/truncation/relay/encoding/field-damage/cardinality) with an
+  8-key `gt.jsonl` sidecar (`raw` verbatim = authoritative), 200 holdout
+  records (MikroTik/Juniper/ZypherFire — FROZEN until P8, `#[ignore]`
+  test), 420 format-expansion lines (ASA VPN/AAA 120 marker-safe, FGT
+  dns/utm/app-ctrl 150, PAN THREAT 90, pfSense v6 60). Committed total
+  1,122,349 B < 1.2 MB budget (schema test).
+- **P7.2 pfSense IPv6 ground truth:** the official Netgate "Raw Filter Log
+  Format" BNF settled it — after the 9 common fields: class, flow-label,
+  hop-limit, proto-**TEXT**, proto-**ID**, length, src, dst, ports (v6 is
+  text-before-id, the reverse of v4). The engine branch was already
+  correct (name=[12], src=[15], dst=[16], ports=[17]/[18]) but had zero
+  coverage; the *generator* had copied v4 intermediate fields — fixtures
+  realigned to spec, `test_p7_pfsense_ipv6_row` pins it.
+- **Engine half (lockstep with evaluator):** ASA fallback verdict phrases
+  (auth-failure phrases first → Blocked — a line can carry both a tunnel
+  and a failed auth; "successful login"/"tunnel established" → Allowed),
+  FortiGate full action-vocab parity with `action_from_kv_token`
+  (allow/allowed, denied/blocked, closed/reset — `action="blocked"` had
+  been Unknown, the entire core disposition delta: 90 failures/engine → 0).
+- **Class anchors (split-only):** bare TRAFFIC/THREAT (PAN-OS type column,
+  CSV-tokenized) join the vocabulary; key-aware `CLASS_KEYS = ["type"]` in
+  `compute_similarity` forces `type="traffic"` vs `type="dns"` apart at
+  sim ≈ 0.97. GA/TA cannot decrease by construction.
+- **P7.5 evaluator/CLI:** `SidecarGroundTruth`/`GtOverrides`/
+  `load_sidecar_gt` (raw-keyed, overrides in-line GT), `RobustnessSummary`
+  (catch_unwind no-panic + recorded failure, format_recognized,
+  lossless_ok, null-vs-wrong field grading — a panicked parse grades
+  non-null as WRONG, never null), `--corpus {core,adversarial,holdout}`
+  (long-only; core list grows the 4 expansion files → 1720 lines), GT
+  refinements (fortigate_dns/utm/appctrl, panos_threat, ASA phrases),
+  `corpus_kind` + 1b robustness scorecard in `to_markdown`.
+- **Core eval (1720 lines):** **dump 0** · GA/TA/VCA/disposition/F1
+  **100.00/100.00 both engines** · Action Inviolability 100% · lossless
+  100% · recognized/no-panic 1720/1720 · p50 76.80/3.47 µs (<5.0 ✓;
+  cool-state reruns 2.93–3.47 µs tiered — an initial 45 µs reading was
+  post-build CPU contention, disproved by isolated reruns 3.05/3.44) ·
+  Tier-2 clusters 12 → 18 · unique templates **1407 vs 73** (19.3×,
+  strict `<` at equal GA/TA 100).
+- **Adversarial eval (757 lines, sidecar authoritative):** dump 544
+  (expected >0 by design: per engine protocol 61 / src_ip 55 / dst_ip 55
+  / disposition 49 / vendor 28 / dst_port 18, +12 tiered-only grouping)
+  · VCA 96.30/96.30 · TA 100.00/100.00 · disposition 93.53/93.53 ·
+  **Action Inviolability 100% PRESERVED** · lossless 100% · GA 100.00
+  baseline vs **98.41** tiered — the 12 grouping failures are all
+  `panos_threat` relay/encoding mutants, and the cross-class check shows
+  **zero ALLOW/DENY-class mixing** (deny-side dispositions only) — the
+  plan's adversarial gate (GA compared against baseline, not required 100)
+  · unique templates 625 vs 81 · robustness 757 no-panic/lossless, 729
+  recognized, GT fields 3110 graded = 1467 correct / 1643 wrong / 675
+  honest nulls.
+- **TDD:** RED confirmed (compile RED for
+  `GtOverrides`/`evaluate_with_mode`/`robustness` — 23 errors; behavioral
+  RED `Unknown → Allowed` on ASA phrases; PAN/pfSense format tests were
+  GREEN immediately — engine already correct per spec). GREEN: 6 ai_tests
+  + 3 parser_tests.
+- **Success-bar status after P7:** criteria 1–4 and 6 ✓ — criterion 5
+  (three-column scorecard + frozen holdout) remains for P8.
+- **Tests 85 → 94** (93 passed + 1 `#[ignore]` frozen holdout). Gate:
+  clippy 0 / fmt ok / workspace green; the C2 snapshot state was
+  separately stash-verified green (clippy 0 / fmt ok / 25+13 tests).
