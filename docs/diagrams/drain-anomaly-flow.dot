@@ -1,5 +1,5 @@
 // Drain template mining + anomaly flow - source for docs/SIMPLIFIED_EXPLANATION_AND_BENCHMARKS.md section 5.
-// Regenerate: dot -Tsvg docs/diagrams/drain-anomaly-flow.dot -o docs/diagrams/drain-anomaly-flow.svg
+// Regenerate: dot -Tpng -Gdpi=144 docs/diagrams/drain-anomaly-flow.dot -o docs/diagrams/drain-anomaly-flow.png
 // Rule: ASCII-only label text (no unicode symbols - some renderers show tofu).
 digraph drain_anomaly_flow {
   graph [rankdir=TB, bgcolor="white", pad="0.2", nodesep="0.35", ranksep="0.45", fontname="Helvetica"];

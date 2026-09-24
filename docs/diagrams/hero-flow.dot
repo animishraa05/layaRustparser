@@ -1,5 +1,5 @@
 // ULPF hero flow - source for the README.md opening diagram.
-// Regenerate: dot -Tsvg docs/diagrams/hero-flow.dot -o docs/diagrams/hero-flow.svg
+// Regenerate: dot -Tpng -Gdpi=144 docs/diagrams/hero-flow.dot -o docs/diagrams/hero-flow.png
 // Rule: ASCII-only label text (no unicode symbols - some renderers show tofu).
 digraph hero_flow {
   graph [rankdir=LR, bgcolor="white", pad="0.2", nodesep="0.35", ranksep="0.55", fontname="Helvetica"];

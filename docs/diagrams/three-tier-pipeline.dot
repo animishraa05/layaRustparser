@@ -1,5 +1,5 @@
 // ULPF 3-tier decision pipeline + integrity chain - source for README.md section 3.
-// Regenerate: dot -Tsvg docs/diagrams/three-tier-pipeline.dot -o docs/diagrams/three-tier-pipeline.svg
+// Regenerate: dot -Tpng -Gdpi=144 docs/diagrams/three-tier-pipeline.dot -o docs/diagrams/three-tier-pipeline.png
 // Rule: ASCII-only label text (no unicode symbols - some renderers show tofu).
 digraph three_tier {
   graph [rankdir=TB, bgcolor="white", pad="0.2", nodesep="0.4", ranksep="0.45", fontname="Helvetica"];

@@ -1,5 +1,5 @@
 // RFC 6962 Merkle tree with a tampered leaf - source for docs/SIMPLIFIED_EXPLANATION_AND_BENCHMARKS.md section 4.
-// Regenerate: dot -Tsvg docs/diagrams/merkle-tree.dot -o docs/diagrams/merkle-tree.svg
+// Regenerate: dot -Tpng -Gdpi=144 docs/diagrams/merkle-tree.dot -o docs/diagrams/merkle-tree.png
 // Rule: ASCII-only label text (no unicode symbols - some renderers show tofu).
 digraph merkle_tree {
   graph [rankdir=TB, bgcolor="white", pad="0.2", nodesep="0.4", ranksep="0.5", fontname="Helvetica"];

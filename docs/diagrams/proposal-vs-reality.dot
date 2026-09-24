@@ -1,5 +1,5 @@
 // Theoretical proposal vs production reality - source for docs/SIMPLIFIED_EXPLANATION_AND_BENCHMARKS.md section 2.
-// Regenerate: dot -Tsvg docs/diagrams/proposal-vs-reality.dot -o docs/diagrams/proposal-vs-reality.svg
+// Regenerate: dot -Tpng -Gdpi=144 docs/diagrams/proposal-vs-reality.dot -o docs/diagrams/proposal-vs-reality.png
 // Rule: ASCII-only label text (no unicode symbols - some renderers show tofu).
 digraph proposal_vs_reality {
   graph [rankdir=LR, bgcolor="white", pad="0.2", nodesep="0.35", ranksep="0.55", fontname="Helvetica"];

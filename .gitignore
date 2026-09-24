@@ -24,3 +24,8 @@ __pycache__/
 
 # `ulpf scorecard` demo output (one command regenerates it; eval_*.md stay committed)
 /scorecard_report.md
+
+# Diagram embeds are PNG (text baked as pixels — SVG text reflows through the
+# viewer's fonts and renders as Symbol-font Greek where Helvetica is missing).
+# .dot sources are the truth; regenerate with `dot -Tpng -Gdpi=144`.
+docs/diagrams/*.svg

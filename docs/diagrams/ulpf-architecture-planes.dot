@@ -1,5 +1,5 @@
 // ULPF four-plane architecture - source for docs/ARCHITECTURE.md.
-// Regenerate: dot -Tsvg docs/diagrams/ulpf-architecture-planes.dot -o docs/diagrams/ulpf-architecture-planes.svg
+// Regenerate: dot -Tpng -Gdpi=144 docs/diagrams/ulpf-architecture-planes.dot -o docs/diagrams/ulpf-architecture-planes.png
 // Rule: ASCII-only label text (no unicode symbols - some renderers show tofu).
 digraph planes {
   graph [rankdir=TB, bgcolor="white", pad="0.2", nodesep="0.5", ranksep="0.55", fontname="Helvetica"];

@@ -9,14 +9,13 @@
 [![Size](https://img.shields.io/badge/binary-18.6%20MB%20%3C%2035%20MB%20req-orange.svg)](#9-sih26156-requirements-matrix)
 [![Repo](https://img.shields.io/badge/github-animishraa05%2FlayaRustparser-blue.svg)](https://github.com/animishraa05/layaRustparser)
 
-> **Submission for the National Technical Research Organisation (NTRO) / Smart India Hackathon (SIH26156)**
-> **Theme:** Blockchain &amp; Cybersecurity · **Category:** Software · **Requirement (k):** standalone binary &lt; 35 MB, requirement met (18.6 MB / 17.7 MiB)
+
 
 A high-performance, vendor-agnostic, containerized, strictly **air-gapped Universal Log Pre-processing Framework** written in **Rust**. ULPF ingests heterogeneous perimeter firewall logs, normalizes them into **OCSF 1.3 NetworkActivity (Class 4001)**, and cryptographically guarantees non-repudiation with **RFC 6962 Merkle trees** anchored into columnar **Apache Parquet WORM** storage — with every raw byte preserved, hash-for-hash, forever.
 
-![ULPF end-to-end flow: raw syslog/JSON/CSV -> classify -> zero-copy parse -> OCSF 1.3 JSON -> Parquet WORM + verify, with SHA-256(raw) / UUIDv7 -> RFC 6962 Merkle root -> ledger.jsonl provenance branch](docs/diagrams/hero-flow.svg)
+![ULPF end-to-end flow: raw syslog/JSON/CSV -> classify -> zero-copy parse -> OCSF 1.3 JSON -> Parquet WORM + verify, with SHA-256(raw) / UUIDv7 -> RFC 6962 Merkle root -> ledger.jsonl provenance branch](docs/diagrams/hero-flow.png)
 
-> Diagram source: [`docs/diagrams/hero-flow.dot`](docs/diagrams/hero-flow.dot) — regenerate with `dot -Tsvg`.
+> Diagram source: [`docs/diagrams/hero-flow.dot`](docs/diagrams/hero-flow.dot) — regenerate with `dot -Tpng -Gdpi=144`.
 
 **Key capabilities**
 
@@ -132,7 +131,7 @@ Every number in this README traces back to stored records. Here is one of them, 
 ```json
 {
   "activity_id": 1,
-  "activity_name": "Open",
+  "activity_name": "Open"Done (P1 → P10.0, 38 commits): measurement-first ruler fixes → vendor extractors → CEF → parse-order/LRU tiers → audit null-correct rules → dynamic message-code anchors → GA/TA to 100 both engines → deterministic adversarial + frozen holdout corpora → sidecar ground truth → full-scale 224,657-line validation → 186-block live chain → CLI hardening (exit codes, SIGTERM flush, debug-panic fix, corpus glob loader) → ASA verdict-phrase union → repo-relative scripts → fresh re-run evidence + this README.,
   "category_uid": 4,
   "class_uid": 4001,
   "type_uid": 400101,
@@ -162,9 +161,9 @@ What to notice:
 
 ## 3. Architecture
 
-![ULPF 3-tier pipeline: UDP/TCP syslog into Tier-1 LRU, Tier-2 Drain miner, Tier-3 Laya engine, then zero-copy extractors -> OCSF 1.3 event -> batcher -> SHA-256 + UUIDv7 + Merkle leaf -> ledger.jsonl and Parquet WORM -> ulpf verify 0/1/2](docs/diagrams/three-tier-pipeline.svg)
+![ULPF 3-tier pipeline: UDP/TCP syslog into Tier-1 LRU, Tier-2 Drain miner, Tier-3 Laya engine, then zero-copy extractors -> OCSF 1.3 event -> batcher -> SHA-256 + UUIDv7 + Merkle leaf -> ledger.jsonl and Parquet WORM -> ulpf verify 0/1/2](docs/diagrams/three-tier-pipeline.png)
 
-> Source: [`docs/diagrams/three-tier-pipeline.dot`](docs/diagrams/three-tier-pipeline.dot) — regenerate with `dot -Tsvg docs/diagrams/three-tier-pipeline.dot -o docs/diagrams/three-tier-pipeline.svg`.
+> Source: [`docs/diagrams/three-tier-pipeline.dot`](docs/diagrams/three-tier-pipeline.dot) — regenerate with `dot -Tpng -Gdpi=144 docs/diagrams/three-tier-pipeline.dot -o docs/diagrams/three-tier-pipeline.png`.
 
 **Why two engines?** The frozen Aho-Corasick **baseline** (`UniversalParser`) is the control. The 3-tier pipeline runs on the same corpora and has to beat it on latency and accuracy at every scale, and on throughput at scale: **2.15×** EPS at 224k lines, with the small-corpus exception noted in §14 (0.82–0.96×). Every scorecard in §4–§5 prints both columns next to each other, so no number is graded against itself.
 
@@ -508,7 +507,7 @@ Known gaps, each one measured:
 | [`OVERHAUL_PLAN.md`](OVERHAUL_PLAN.md) | The P1–P10 measurement-first overhaul plan + per-phase execution log |
 | [`AGENTS.md`](AGENTS.md) | Contributor handbook: invariants, crate map, verification gate, gotchas, extension recipes |
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | High-assurance architecture spec: data plane, integrity plane, math-grade reasoning |
-| [`docs/diagrams/`](docs/diagrams/) | Graphviz `.dot` sources + rendered `.svg` for every architecture diagram in this README and `docs/` (regenerate with `dot -Tsvg`) |
+| [`docs/diagrams/`](docs/diagrams/) | Graphviz `.dot` sources + rendered `.png` for every architecture diagram in this README and `docs/` (regenerate with `dot -Tpng -Gdpi=144`) |
 | [`docs/SIH_EVALUATION_DOSSIER.md`](docs/SIH_EVALUATION_DOSSIER.md) | Requirement-by-requirement defense dossier (a–k) + out-of-scope honesty section |
 | [`docs/SIMPLIFIED_EXPLANATION_AND_BENCHMARKS.md`](docs/SIMPLIFIED_EXPLANATION_AND_BENCHMARKS.md) | Plain-language guide (airport analogy) + benchmark deep-dive for non-experts |
 | [`docs/DETAILED_IMPLEMENTATION_VS_PROPOSAL.md`](docs/DETAILED_IMPLEMENTATION_VS_PROPOSAL.md) | Implemented system vs original proposal, subsystem by subsystem |
