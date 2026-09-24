@@ -1,9 +1,11 @@
+pub mod cef;
 pub mod cisco_asa;
 pub mod fortigate;
 pub mod paloalto;
 pub mod pfsense;
 pub mod suricata;
 
+pub use cef::CefExtractor;
 pub use cisco_asa::CiscoAsaExtractor;
 pub use fortigate::FortigateExtractor;
 pub use paloalto::PaloAltoExtractor;

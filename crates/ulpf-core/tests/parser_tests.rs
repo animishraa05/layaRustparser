@@ -409,3 +409,101 @@ fn test_fallback_lossless_parsing_for_unknown_log() {
     );
     assert_eq!(event.metadata.product.vendor_name, "Unknown");
 }
+
+#[test]
+fn test_cef_parsing_suite() {
+    let parser = UniversalParser::new();
+
+    // Classification: CEF: header wins (vendor-neutral envelope).
+    let sample_accept = "CEF:0|Fortinet|FortiGate|v7.0.2|0000000019|traffic:forward accept|3|deviceExternalId=FGT200F581900120 src=192.168.1.146 spt=25297 dst=203.0.113.207 dpt=80 proto=6 act=accept cat=traffic:forward cs1=vdom-dmz cs1Label=vd cs2=port2 cs2Label=srcintf cs3=dmz cs3Label=dstintf cn1=5 cn1Label=policyid app=HTTP in=485401 out=1176097 dvchost=FGT-DC-EDGE";
+    assert_eq!(parser.classify(sample_accept), VendorFormat::Cef);
+
+    // 1. act=accept -> Allowed (GT CEF branch parity)
+    let event = parser.parse(sample_accept).expect("parse cef accept");
+    assert_eq!(event.category_uid, 4);
+    assert_eq!(event.class_uid, 4001);
+    assert_eq!(event.type_uid, 400103, "accept -> TRAFFIC_FLOW type_uid");
+    assert_eq!(event.activity_id, ulpf_core::activity_id::TRAFFIC_FLOW);
+    assert_eq!(event.disposition, disposition::ALLOWED);
+    assert_eq!(event.src_endpoint.ip.as_deref(), Some("192.168.1.146"));
+    assert_eq!(event.src_endpoint.port, Some(25297));
+    assert_eq!(event.dst_endpoint.ip.as_deref(), Some("203.0.113.207"));
+    assert_eq!(event.dst_endpoint.port, Some(80));
+    assert_eq!(event.connection_info.protocol_num, Some(6));
+    assert_eq!(event.connection_info.protocol_name.as_deref(), Some("TCP"));
+    // Vendor comes from CEF header field 2 — never hardcoded.
+    assert_eq!(event.metadata.product.vendor_name, "Fortinet");
+    assert_eq!(event.metadata.product.name, "FortiGate");
+    assert_eq!(event.metadata.product.version.as_deref(), Some("v7.0.2"));
+    assert_eq!(event.metadata.raw_data, sample_accept);
+    assert_eq!(
+        event.metadata.raw_hash,
+        hex::encode(Sha256::digest(sample_accept.as_bytes())),
+        "raw must be preserved byte-for-byte (SHA-256)"
+    );
+    assert_eq!(
+        Uuid::parse_str(&event.metadata.event_id)
+            .unwrap()
+            .get_version_num(),
+        7
+    );
+    let unmapped = event.unmapped.as_ref().expect("unmapped present");
+    assert_eq!(
+        unmapped.get("cef_name").map(String::as_str),
+        Some("traffic:forward accept")
+    );
+    assert_eq!(
+        unmapped.get("cef_signature_id").map(String::as_str),
+        Some("0000000019")
+    );
+    assert_eq!(unmapped.get("cef_severity").map(String::as_str), Some("3"));
+    assert_eq!(
+        unmapped.get("dvchost").map(String::as_str),
+        Some("FGT-DC-EDGE")
+    );
+    // Traffic bytes from CEF in=/out=
+    let traffic = event.traffic.expect("CEF in/out bytes -> Traffic");
+    assert_eq!(traffic.bytes_in, Some(485401));
+    assert_eq!(traffic.bytes_out, Some(1176097));
+
+    // 2. act=deny -> Blocked (action inviolability: never Allowed)
+    let sample_deny = "CEF:0|Fortinet|FortiGate|v7.0.2|0000000012|traffic:forward deny|3|src=192.168.6.68 spt=46825 dst=198.51.100.142 dpt=123 proto=17 act=deny cat=traffic:forward app=NTP in=380334 out=2344876 dvchost=FGT-BRANCH-02";
+    let event = parser.parse(sample_deny).expect("parse cef deny");
+    assert_eq!(event.disposition, disposition::BLOCKED);
+    assert_ne!(event.disposition, disposition::ALLOWED);
+    assert_eq!(event.connection_info.protocol_num, Some(17));
+    assert_eq!(event.connection_info.protocol_name.as_deref(), Some("UDP"));
+    assert_eq!(
+        event.metadata.raw_hash,
+        hex::encode(Sha256::digest(sample_deny.as_bytes()))
+    );
+
+    // 3. Session-end states of permitted traffic -> Allowed + CLOSE
+    let sample_rst = "CEF:0|Fortinet|FortiGate|v7.0.2|0000000014|traffic:forward server-rst|3|src=192.168.3.14 spt=46909 dst=198.51.100.3 dpt=993 proto=6 act=server-rst cat=traffic:forward app=IMAPS";
+    let event = parser.parse(sample_rst).expect("parse cef server-rst");
+    assert_eq!(event.disposition, disposition::ALLOWED);
+    assert_eq!(event.activity_id, ulpf_core::activity_id::CLOSE);
+
+    let sample_timeout = "CEF:0|Fortinet|FortiGate|v7.0.2|0000000018|traffic:forward timeout|3|src=192.168.3.12 spt=58473 dst=203.0.113.236 dpt=22 proto=6 act=timeout cat=traffic:forward app=SSH";
+    let event = parser.parse(sample_timeout).expect("parse cef timeout");
+    assert_eq!(event.disposition, disposition::ALLOWED);
+    assert_eq!(event.activity_id, ulpf_core::activity_id::CLOSE);
+
+    // 4. act=close -> Allowed + CLOSE (5th distinct fixture)
+    let sample_close = "CEF:0|Fortinet|FortiGate|v7.0.2|0000000019|traffic:forward close|3|src=192.168.9.115 spt=34212 dst=203.0.113.50 dpt=80 proto=6 act=close cat=traffic:forward app=HTTP";
+    let event = parser.parse(sample_close).expect("parse cef close");
+    assert_eq!(event.disposition, disposition::ALLOWED);
+    assert_eq!(event.activity_id, ulpf_core::activity_id::CLOSE);
+
+    // 5. Syslog-prefixed CEF from a foreign vendor: vendor from header field 2
+    let sample_ms = "<134>Oct 15 10:20:30 gw CEF:0|Microsoft|Windows|10.0.19044|9001|Logon|5|src=10.20.30.40 spt=50122 dst=10.20.30.10 dpt=445 proto=6 act=allowed";
+    assert_eq!(parser.classify(sample_ms), VendorFormat::Cef);
+    let event = parser.parse(sample_ms).expect("parse syslog-prefixed cef");
+    assert_eq!(event.metadata.product.vendor_name, "Microsoft");
+    assert_eq!(event.metadata.product.name, "Windows");
+    assert_eq!(event.disposition, disposition::ALLOWED);
+    assert_eq!(
+        event.metadata.raw_hash,
+        hex::encode(Sha256::digest(sample_ms.as_bytes()))
+    );
+}

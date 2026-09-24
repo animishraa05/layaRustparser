@@ -139,6 +139,10 @@ impl SignatureLruCache {
             // Hash the ASA message tag (e.g. %ASA-6-302013)
             let tag_slice = &window[pos..window.len().min(pos + 16)];
             hasher.write(tag_slice.as_bytes());
+        } else if window.contains("CEF:") {
+            // CEF is a vendor-neutral envelope — one signature bucket for the
+            // format (device vendor lives in the header, same cached format).
+            hasher.write(b"cef_extension");
         } else if window.contains("devname=")
             || window.contains("type=\"traffic\"")
             || window.contains("logid=")

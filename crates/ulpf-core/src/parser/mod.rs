@@ -4,7 +4,8 @@ pub mod lru_cache;
 
 pub use classifier::{Classifier, VendorFormat};
 pub use extractors::{
-    CiscoAsaExtractor, FortigateExtractor, PaloAltoExtractor, PfSenseExtractor, SuricataExtractor,
+    CefExtractor, CiscoAsaExtractor, FortigateExtractor, PaloAltoExtractor, PfSenseExtractor,
+    SuricataExtractor,
 };
 pub use lru_cache::{LruStats, SignatureLruCache};
 
@@ -31,6 +32,7 @@ pub struct UniversalParser {
     paloalto: PaloAltoExtractor,
     suricata: SuricataExtractor,
     pfsense: PfSenseExtractor,
+    cef: CefExtractor,
     pub cache: SignatureLruCache,
 }
 
@@ -43,6 +45,7 @@ impl UniversalParser {
             paloalto: PaloAltoExtractor::new(),
             suricata: SuricataExtractor::new(),
             pfsense: PfSenseExtractor::new(),
+            cef: CefExtractor::new(),
             cache: SignatureLruCache::new(),
         }
     }
@@ -67,6 +70,7 @@ impl UniversalParser {
             VendorFormat::PaloAlto => self.paloalto.parse(raw)?,
             VendorFormat::Suricata => self.suricata.parse(raw)?,
             VendorFormat::PfSense => self.pfsense.parse(raw)?,
+            VendorFormat::Cef => self.cef.parse(raw)?,
             VendorFormat::Unknown => {
                 return Err(anyhow::anyhow!(
                     "Unrecognized log format for raw line: {}",
@@ -132,6 +136,7 @@ impl UniversalParser {
             VendorFormat::PaloAlto => self.paloalto.parse(raw)?,
             VendorFormat::Suricata => self.suricata.parse(raw)?,
             VendorFormat::PfSense => self.pfsense.parse(raw)?,
+            VendorFormat::Cef => self.cef.parse(raw)?,
             VendorFormat::Unknown => {
                 return Err(anyhow::anyhow!(
                     "Unrecognized log format for raw line: {}",

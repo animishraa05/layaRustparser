@@ -1106,8 +1106,11 @@ impl EvaluatorEngine {
             if let Some(value) = token.strip_prefix(key) {
                 let value = value.trim_matches('"').trim_matches(',');
                 return match value {
-                    "accept" | "allow" => Some("Allowed".to_string()),
-                    "deny" | "blocked" | "block" => Some("Blocked".to_string()),
+                    // `allowed`/`denied` are the OCSF/Suricata-style verbs CEF
+                    // devices (e.g. Windows) emit; previously these fell to
+                    // `None` and the disposition check was skipped.
+                    "accept" | "allow" | "allowed" => Some("Allowed".to_string()),
+                    "deny" | "denied" | "blocked" | "block" => Some("Blocked".to_string()),
                     "drop" => Some("Dropped".to_string()),
                     "close" | "closed" | "timeout" | "client-rst" | "server-rst" | "reset" => {
                         Some("Allowed".to_string())

@@ -9,6 +9,7 @@ pub enum VendorFormat {
     PaloAlto,
     Suricata,
     PfSense,
+    Cef,
     Unknown,
 }
 
@@ -20,6 +21,7 @@ impl VendorFormat {
             Self::PaloAlto => "Palo Alto PAN-OS",
             Self::Suricata => "Suricata EVE-JSON",
             Self::PfSense => "pfSense Filterlog",
+            Self::Cef => "ArcSight CEF",
             Self::Unknown => "Unknown",
         }
     }
@@ -39,6 +41,8 @@ impl Classifier {
         let patterns_with_formats: Vec<(&str, VendorFormat)> = vec![
             // Cisco ASA signatures
             ("%ASA-", VendorFormat::CiscoAsa),
+            // ArcSight CEF (vendor-neutral envelope: device vendor is header field 2)
+            ("CEF:", VendorFormat::Cef),
             // Fortinet signatures
             ("devname=\"", VendorFormat::Fortinet),
             ("type=\"traffic\"", VendorFormat::Fortinet),
@@ -101,6 +105,9 @@ impl Classifier {
         let trimmed = raw.trim();
         if trimmed.contains("%ASA-") {
             return VendorFormat::CiscoAsa;
+        }
+        if trimmed.contains("CEF:") {
+            return VendorFormat::Cef;
         }
         if trimmed.contains("filterlog") {
             return VendorFormat::PfSense;
@@ -167,6 +174,12 @@ mod tests {
                 "Oct 15 10:20:30 pfSense filterlog[12345]: 5,,,1000000103,em0,match,pass,in,4"
             ),
             VendorFormat::PfSense
+        );
+        assert_eq!(
+            classifier.classify(
+                "CEF:0|Fortinet|FortiGate|v7.0.2|0000000019|traffic:forward accept|3|src=10.0.0.1 spt=1 dpt=2 proto=6 act=accept"
+            ),
+            VendorFormat::Cef
         );
         assert_eq!(
             classifier.classify("Random unformatted log line here"),
