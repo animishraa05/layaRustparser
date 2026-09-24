@@ -38,6 +38,7 @@ impl Default for DrainConfig {
             surge_multiplier: 3.0,
             window_size: 100,
             unique_anchor_tokens: vec![
+                // Security verdicts (invariant #3 — Action Inviolability).
                 "ALLOW".into(),
                 "DENY".into(),
                 "DROP".into(),
@@ -45,6 +46,20 @@ impl Default for DrainConfig {
                 "PERMIT".into(),
                 "REJECT".into(),
                 "PASS".into(),
+                // P6.1 vocabulary completion: observed verdict/lifecycle tokens
+                // (raw corpus + `--audit-dump`) that were missing — `accept`
+                // is THE FortiGate/Suricata allow-verb (`act="accept"` vs
+                // `act="deny"` previously merged at sim ≈ 0.95 unguarded).
+                "ACCEPT".into(),
+                "ALLOWED".into(),
+                "DENIED".into(),
+                "BLOCKED".into(),
+                "BUILT".into(),
+                "TEARDOWN".into(),
+                "CLOSE".into(),
+                "CLOSED".into(),
+                "RESET".into(),
+                "RST".into(),
             ],
         }
     }
@@ -95,10 +110,23 @@ pub struct LogCluster {
     pub last_seen: i64,
     #[serde(skip)]
     recent_timestamps: VecDeque<i64>,
+    /// Dynamic message-code anchor (P6.1): the raw `%FAC-SEV-CODE:` tag of the
+    /// line that CREATED this cluster. `find_best_match` enforces strict
+    /// equality → every syslog cluster is tag-homogeneous: tags never
+    /// generalize to `<*>`, GA can't mix message codes, and TA's
+    /// verbatim-GT-tag clause holds by construction. `None` for untagged
+    /// formats → no filter (CEF/kv/CSV/JSON unaffected).
+    #[serde(default)]
+    pub syslog_tag: Option<String>,
 }
 
 impl LogCluster {
-    pub fn new(cluster_id: usize, tokens: Vec<String>, now_ms: i64) -> Self {
+    pub fn new(
+        cluster_id: usize,
+        tokens: Vec<String>,
+        now_ms: i64,
+        syslog_tag: Option<String>,
+    ) -> Self {
         let template = tokens.join(" ");
         let size = tokens.len();
         let mut recent_timestamps = VecDeque::with_capacity(64);
@@ -112,6 +140,7 @@ impl LogCluster {
             created_at: now_ms,
             last_seen: now_ms,
             recent_timestamps,
+            syslog_tag,
         }
     }
 
@@ -190,6 +219,28 @@ pub fn mask_line(raw: &str) -> String {
     SHARED.get_or_init(LogMasker::new).mask(raw)
 }
 
+/// Syslog message-code protection pattern — **single source of truth** shared
+/// by the masker (`LogMasker::re_syslog_tag`, which protects tags verbatim in
+/// masked output) and the cluster tag anchor (`syslog_tag_of`, P6.1).
+pub(crate) const SYSLOG_TAG_PATTERN: &str = r"%[A-Za-z0-9_-]+-\d+-\d+:|%[A-Za-z0-9_-]+:";
+
+/// Syslog message code (`%ASA-6-302013:`) extracted from a raw line, or `None`
+/// for untagged formats (CEF / FortiGate kv / Suricata JSON / PAN CSV).
+///
+/// Dynamic anchor per plan `P6.1` — Action Inviolability for intra-vendor
+/// severity codes: `302013` (built) vs `302015` (built/udp) vs `106001`
+/// (denied) must never share a cluster even when their token streams sit at
+/// similarity ≥ 0.5 (one tag token in fourteen). Mirrors the masker's tag
+/// protection exactly, so cluster tag-homogeneity implies
+/// `template_is_valid`'s verbatim-GT-tag clause for every syslog cluster.
+pub fn syslog_tag_of(raw: &str) -> Option<String> {
+    static TAG_RE: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
+    TAG_RE
+        .get_or_init(|| Regex::new(SYSLOG_TAG_PATTERN).expect("valid syslog tag pattern"))
+        .find(raw)
+        .map(|m| m.as_str().to_owned())
+}
+
 pub struct DrainMiner {
     config: DrainConfig,
     root: Node,
@@ -238,8 +289,10 @@ impl DrainMiner {
 
         let token_count = tokens.len();
 
-        // 3. Search Prefix Tree down to candidate leaf node
-        let (matched_cluster_id, max_sim) = self.find_best_match(&tokens);
+        // 3. Search Prefix Tree down to candidate leaf node — tag-anchored (P6.1):
+        //    candidate clusters must carry the SAME syslog message code (or none).
+        let syslog_tag = syslog_tag_of(raw);
+        let (matched_cluster_id, max_sim) = self.find_best_match(&tokens, &syslog_tag);
 
         let mut anomaly = None;
         let cluster_id: usize;
@@ -283,7 +336,7 @@ impl DrainMiner {
         } else {
             // No match found: Create a new cluster
             cluster_id = self.next_cluster_id.fetch_add(1, Ordering::SeqCst);
-            let new_cluster = LogCluster::new(cluster_id, tokens.clone(), now_ms);
+            let new_cluster = LogCluster::new(cluster_id, tokens.clone(), now_ms, syslog_tag);
             template = new_cluster.template.clone();
             is_new = true;
 
@@ -341,8 +394,17 @@ impl DrainMiner {
         }
     }
 
-    /// Search candidate clusters in prefix tree and select cluster with maximum similarity
-    fn find_best_match(&self, tokens: &[String]) -> (Option<usize>, f64) {
+    /// Search candidate clusters in prefix tree and select cluster with maximum similarity.
+    ///
+    /// P6.1 dynamic anchor: candidates whose `syslog_tag` differs from the
+    /// incoming line's tag are skipped **before** similarity — strict
+    /// `Option` equality (tagged lines only match their own code; untagged
+    /// `None` lines match freely). Split-only: can never lower GA/TA.
+    fn find_best_match(
+        &self,
+        tokens: &[String],
+        syslog_tag: &Option<String>,
+    ) -> (Option<usize>, f64) {
         let token_count = tokens.len();
         let len_key = token_count.to_string();
 
@@ -381,6 +443,10 @@ impl DrainMiner {
         for &c_id in &current.cluster_ids {
             if let Some(cluster) = self.clusters.get(&c_id) {
                 if cluster.size != token_count {
+                    continue;
+                }
+                // P6.1: message-code anchor — strict tag homogeneity.
+                if &cluster.syslog_tag != syslog_tag {
                     continue;
                 }
                 let sim = Self::compute_similarity(
@@ -436,7 +502,15 @@ impl DrainMiner {
 
     /// Compute Drain similarity between cluster template and incoming tokens:
     /// sim = count(matching or wildcard tokens) / total_tokens
-    /// Enforces DrainDotNet UniqueEventPatterns: anchor tokens (e.g. ALLOW vs DENY) cannot be merged!
+    /// Enforces DrainDotNet UniqueEventPatterns: anchor tokens (e.g. ALLOW vs
+    /// DENY, act="accept" vs act="deny", BUILT vs TEARDOWN) cannot be merged.
+    ///
+    /// P6.1: anchors are compared on `anchor_value` forms — the VALUE of
+    /// `key="value"` / `"key":"value"` tokens — so kv-log verdicts
+    /// (FortiGate `action="deny"`, Suricata `"action":"allowed"`) participate
+    /// in Action Inviolability with the same force as bare ASA verbs.
+    /// Allocation-free (`eq_ignore_ascii_case` over slices) — stays off the
+    /// `to_string` budget of the hot path.
     #[inline]
     fn compute_similarity(
         tmpl_tokens: &[String],
@@ -449,12 +523,12 @@ impl DrainMiner {
 
         if !anchor_tokens.is_empty() {
             for (t1, t2) in tmpl_tokens.iter().zip(in_tokens.iter()) {
-                let t1_upper = t1.to_ascii_uppercase();
-                let t2_upper = t2.to_ascii_uppercase();
+                let v1 = Self::anchor_value(t1);
+                let v2 = Self::anchor_value(t2);
                 let is_anchor = anchor_tokens
                     .iter()
-                    .any(|a| a == &t1_upper || a == &t2_upper);
-                if is_anchor && t1_upper != t2_upper {
+                    .any(|a| v1.eq_ignore_ascii_case(a) || v2.eq_ignore_ascii_case(a));
+                if is_anchor && !v1.eq_ignore_ascii_case(v2) {
                     return 0.0; // Force distinct template cluster
                 }
             }
@@ -467,6 +541,23 @@ impl DrainMiner {
             }
         }
         (matches as f64) / (tmpl_tokens.len() as f64)
+    }
+
+    /// Value-form of a token for anchor comparison: for `key=value` /
+    /// `"key":"value"` shapes the VALUE part (separator + quotes/commas
+    /// trimmed), otherwise the whole token. Pure slices — no allocation.
+    #[inline]
+    fn anchor_value(token: &str) -> &str {
+        let value = if let Some(p) = token.find('=') {
+            token.get(p + 1..).unwrap_or(token)
+        } else if let Some(p) = token.find("\":") {
+            token.get(p + 2..).unwrap_or(token)
+        } else {
+            token
+        };
+        value.trim_matches(|c: char| {
+            c == '"' || c == '\'' || c == ',' || c == ';' || c.is_whitespace()
+        })
     }
 
     /// Check if token contains digits or dynamic parameters
@@ -515,7 +606,7 @@ struct LogMasker {
 impl LogMasker {
     fn new() -> Self {
         Self {
-            re_syslog_tag: Regex::new(r"%[A-Za-z0-9_-]+-\d+-\d+:|%[A-Za-z0-9_-]+:").unwrap(),
+            re_syslog_tag: Regex::new(SYSLOG_TAG_PATTERN).unwrap(),
             // IP:port or IP/port (e.g. outside:192.168.1.1/443 or 10.0.0.1:8080)
             re_ip_port: Regex::new(r"((?:\d{1,3}\.){3}\d{1,3})[:/](\d{1,5})").unwrap(),
             // Standalone IP

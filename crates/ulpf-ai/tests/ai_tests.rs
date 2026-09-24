@@ -310,6 +310,114 @@ fn test_drain_unique_event_patterns_anchor_tokens() {
 
     assert!(cluster1.template.contains("ALLOW"));
     assert!(cluster2.template.contains("DENY"));
+
+    // ------------------------------------------------------------------
+    // P6.1: kv-format anchors — enforcement must see the VALUE of
+    // `key="value"` tokens (real FortiGate corpus line + a single-field
+    // mutation to deny; every other kv key, including `time=`, differs at
+    // most cosmetically after masking, so without value-aware anchors the
+    // two lines sit far above the 0.5 similarity threshold).
+    // ------------------------------------------------------------------
+    let mut kv_miner = DrainMiner::new(DrainConfig::default());
+    let fgt_accept = r#"<189>date=2026-09-21 time=14:00:05 devname="FGT-CORP-FW01" devid="FGT100E391780045" eventtime=1789979405000057304 tz="+0000" logid="0000000003" type="traffic" subtype="forward" level="notice" vd="root" srcip=192.168.5.14 srcport=50470 srcintf="trust" srcintfrole="lan" dstip=198.51.100.22 dstport=3389 dstintf="untrust" dstintfrole="wan" poluuid="d607b1e9-4148-51ec-8962-e61e05d05051" sessionid=1000230 proto=6 action="accept" policyid=41 policytype="policy" service="RDP" trandisp="snat" transip=198.51.100.27 transport=50470 duration=1120 sentbyte=410932 rcvdbyte=1889872 sentpkt=386 rcvdpkt=3586 appcat="unscanned""#;
+    let fgt_deny = fgt_accept
+        .replace("time=14:00:05", "time=14:00:06")
+        .replace("action=\"accept\"", "action=\"deny\"");
+    let fgt_accept_2 = fgt_accept
+        .replace("time=14:00:05", "time=14:00:09")
+        .replace("srcip=192.168.5.14", "srcip=192.168.7.45");
+
+    let kv_a = kv_miner.add_log(fgt_accept);
+    let kv_d = kv_miner.add_log(&fgt_deny);
+    let kv_a2 = kv_miner.add_log(&fgt_accept_2);
+
+    assert_eq!(
+        kv_a.cluster_id, kv_a2.cluster_id,
+        "identical kv action must cluster together (no over-split)"
+    );
+    assert_ne!(
+        kv_a.cluster_id, kv_d.cluster_id,
+        "kv action values (accept vs deny) are anchors: Action Inviolability \
+         must hold through key=\"value\" tokens"
+    );
+    let kv_cluster = kv_miner.get_cluster(kv_a.cluster_id).unwrap();
+    assert!(
+        kv_cluster.template.contains("action=\"accept"),
+        "winning kv action value stays literal in the template"
+    );
+}
+
+// ============================================================================
+// P6.1 — DYNAMIC SYSLOG MESSAGE-CODE ANCHORS
+// ============================================================================
+// The masker preserves `%FAC-SEV-CODE:` tags verbatim, but a tag is only
+// 1 token of ~14 — cross-code lines sit at sim 0.79 (or ratchet to 1.0 after
+// early generalization) and merged 302013/302014/302015/106001 into shared
+// clusters, destroying GA (mixed GT tags) and TA (tag position generalized
+// to `<*>`, failing the verbatim-GT-tag clause). The tag must act as a
+// per-line anchor: clusters are tag-homogeneous.
+#[test]
+fn test_drain_syslog_message_code_anchors() {
+    use ulpf_ai::drain::syslog_tag_of;
+
+    // helper contract: tag extraction mirrors the masker's protection pattern
+    let asa_302013 = "<166>Sep 21 14:00:43 asa-edge-01 %ASA-6-302013: Built inbound TCP connection 1001322 for outside:203.0.113.137/993 (203.0.113.137/993) to inside:10.1.18.77/26375 (198.51.100.238/26375)";
+    assert_eq!(syslog_tag_of(asa_302013).as_deref(), Some("%ASA-6-302013:"));
+    assert_eq!(
+        syslog_tag_of(r#"date=2026-09-21 devname="FGT-DC-EDGE" type="traffic""#),
+        None,
+        "untagged vendor formats carry no message-code anchor"
+    );
+
+    let mut miner = DrainMiner::new(DrainConfig::default());
+
+    // --- (1) same code, near-identical shape: must NOT over-split ---------
+    let r1 = asa_302013;
+    let r2 = "<166>Sep 21 14:00:58 asa-vpn-gw01 %ASA-6-302013: Built outbound TCP connection 1000734 for outside:198.51.100.50/1433 (198.51.100.50/1433) to inside:10.1.18.77/16288 (198.51.100.227/16288)";
+    let res1 = miner.add_log(r1);
+    let res2 = miner.add_log(r2);
+    assert_eq!(
+        res1.cluster_id, res2.cluster_id,
+        "same message code must stay one cluster (no over-split)"
+    );
+
+    // --- (2) 302013 vs 302015, direct high-sim pair (11/14 = 0.79) --------
+    let r5 = "<166>Sep 21 14:00:04 asa-core-fw %ASA-6-302015: Built inbound UDP connection 1000556 for outside:198.51.100.18/5060 (198.51.100.18/5060) to inside:10.1.6.180/59770 (198.51.100.207/59770)";
+    let res5 = miner.add_log(r5);
+    assert_ne!(
+        res1.cluster_id, res5.cluster_id,
+        "302013 and 302015 are distinct message codes: never one cluster"
+    );
+
+    // --- (3) the observed corpus ratchet: 302014 generalizes (host,
+    // duration, teardown-verb tail), then 106001 lands at sim >= 0.5 and
+    // drags the TAG position to `<*>`. Tag anchoring must cut it off.
+    let t1 = "<166>Sep 21 14:01:13 asa-dc-01 %ASA-6-302014: Teardown TCP connection 1001269 for outside:203.0.113.54/123 to inside:10.1.14.89/54772 duration 0:21:02 bytes 967806 Reset-I";
+    let t2 = "<166>Sep 21 14:00:02 asa-core-fw %ASA-6-302014: Teardown TCP connection 1000780 for outside:203.0.113.163/3306 to inside:10.1.9.41/27459 duration 0:27:58 bytes 3350664 Reset-I";
+    let t3 = "<166>Sep 21 14:00:30 asa-core-fw %ASA-6-302014: Teardown TCP connection 1000805 for outside:198.51.100.59/22 to inside:10.1.1.196/37888 duration 0:29:16 bytes 632624 Reset-O";
+    let teardown_seed = miner.add_log(t1);
+    let res_t2 = miner.add_log(t2);
+    let res_t3 = miner.add_log(t3);
+    assert_eq!(teardown_seed.cluster_id, res_t2.cluster_id);
+    assert_eq!(teardown_seed.cluster_id, res_t3.cluster_id);
+
+    let r4 = "<162>Sep 21 14:00:10 asa-vpn-gw01 %ASA-2-106001: Inbound TCP connection denied from 203.0.113.143/27501 to 10.1.9.208/110 flags RST on interface outside";
+    let res4 = miner.add_log(r4);
+    assert_ne!(
+        teardown_seed.cluster_id, res4.cluster_id,
+        "106001 must never join a 302014 cluster (observed corpus merge)"
+    );
+
+    // --- (4) TA contract: every cluster template carries ITS OWN tag -----
+    //      verbatim — the verbatim-GT-tag clause of template_is_valid.
+    let c_302013 = miner.get_cluster(res1.cluster_id).unwrap();
+    let c_302015 = miner.get_cluster(res5.cluster_id).unwrap();
+    let c_302014 = miner.get_cluster(teardown_seed.cluster_id).unwrap();
+    let c_106001 = miner.get_cluster(res4.cluster_id).unwrap();
+    assert!(c_302013.template.contains("%ASA-6-302013:"));
+    assert!(c_302015.template.contains("%ASA-6-302015:"));
+    assert!(c_302014.template.contains("%ASA-6-302014:"));
+    assert!(c_106001.template.contains("%ASA-2-106001:"));
 }
 
 #[test]
