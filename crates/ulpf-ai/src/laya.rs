@@ -39,6 +39,10 @@ pub struct LayaDecisionEngine {
     vendor_candidates: Vec<String>,
     /// Semantic token priors for device taxonomy
     vendor_token_priors: HashMap<String, Vec<&'static str>>,
+    /// Fingerprint priors: exact format markers that uniquely identify one vendor
+    /// (weighted far above contextual structural tokens — a single fingerprint hit
+    /// must dominate any number of shared structural cues)
+    vendor_fingerprint_priors: HashMap<String, Vec<&'static str>>,
     /// Action resolution priors
     action_token_priors: HashMap<String, Vec<&'static str>>,
     /// Threat pattern tokens
@@ -64,7 +68,6 @@ impl LayaDecisionEngine {
         vendor_token_priors.insert(
             "cisco_asa".into(),
             vec![
-                "%ASA-",
                 "Built",
                 "Teardown",
                 "outside:",
@@ -77,9 +80,7 @@ impl LayaDecisionEngine {
         vendor_token_priors.insert(
             "fortigate".into(),
             vec![
-                "devname=",
                 "type=\"traffic\"",
-                "logid=",
                 "vd=\"root\"",
                 "subtype=\"forward\"",
                 "srcip=",
@@ -88,21 +89,12 @@ impl LayaDecisionEngine {
         );
         vendor_token_priors.insert(
             "paloalto".into(),
-            vec![
-                ",TRAFFIC,",
-                ",THREAT,",
-                "Trust_to_Untrust",
-                "pan-os",
-                "vsys1",
-                "Trust",
-                "Untrust",
-            ],
+            vec!["Trust_to_Untrust", "pan-os", "vsys1", "Trust", "Untrust"],
         );
         vendor_token_priors.insert(
             "suricata".into(),
             vec![
                 "\"timestamp\":",
-                "\"event_type\":",
                 "\"flow_id\":",
                 "\"alert\":",
                 "\"app_proto\":",
@@ -111,20 +103,11 @@ impl LayaDecisionEngine {
         );
         vendor_token_priors.insert(
             "pfsense".into(),
-            vec![
-                "filterlog[",
-                "filterlog:",
-                "pass",
-                "block",
-                "match",
-                "igb0",
-                "em0",
-            ],
+            vec!["pass", "block", "match", "igb0", "em0"],
         );
         vendor_token_priors.insert(
             "juniper_srx".into(),
             vec![
-                "RT_FLOW:",
                 "RT_FLOW_SESSION_CREATE",
                 "session",
                 "created",
@@ -134,15 +117,21 @@ impl LayaDecisionEngine {
         );
         vendor_token_priors.insert(
             "checkpoint".into(),
-            vec![
-                "CheckPoint-FW",
-                "Quantum",
-                "rule",
-                "accept",
-                "drop",
-                "reject",
-            ],
+            vec!["Quantum", "rule", "accept", "drop", "reject"],
         );
+
+        // Fingerprint priors: exact, vendor-unique format markers (weight 10.0 vs
+        // structural 4.0 — see classify_vendor). A format-level token such as
+        // `%ASA-` or `filterlog[` is conclusive evidence; structural tokens are
+        // only contextual (e.g. `session` appears inside FortiGate `sessionid=`).
+        let mut vendor_fingerprint_priors: HashMap<String, Vec<&'static str>> = HashMap::new();
+        vendor_fingerprint_priors.insert("cisco_asa".into(), vec!["%ASA-"]);
+        vendor_fingerprint_priors.insert("fortigate".into(), vec!["devname=", "logid="]);
+        vendor_fingerprint_priors.insert("paloalto".into(), vec![",TRAFFIC,", ",THREAT,"]);
+        vendor_fingerprint_priors.insert("suricata".into(), vec!["\"event_type\":"]);
+        vendor_fingerprint_priors.insert("pfsense".into(), vec!["filterlog[", "filterlog:"]);
+        vendor_fingerprint_priors.insert("juniper_srx".into(), vec!["RT_FLOW:"]);
+        vendor_fingerprint_priors.insert("checkpoint".into(), vec!["CheckPoint-FW"]);
 
         let mut action_token_priors = HashMap::new();
         action_token_priors.insert(
@@ -204,6 +193,7 @@ impl LayaDecisionEngine {
         Self {
             vendor_candidates,
             vendor_token_priors,
+            vendor_fingerprint_priors,
             action_token_priors,
             threat_tokens,
             _onnx_model_path: None,
@@ -223,10 +213,20 @@ impl LayaDecisionEngine {
 
         for vendor in &self.vendor_candidates {
             let mut match_weight = 0.0;
+            // Structural priors: contextual cues (weight 4.0)
             if let Some(priors) = self.vendor_token_priors.get(vendor) {
                 for &token in priors {
                     if input.contains(token) {
-                        match_weight += 2.5;
+                        match_weight += 4.0;
+                    }
+                }
+            }
+            // Fingerprint priors: conclusive format markers (weight 10.0) — one
+            // hit is decisive (e^10 >> e^(4 * k) for the shared structural set)
+            if let Some(fingerprints) = self.vendor_fingerprint_priors.get(vendor) {
+                for &token in fingerprints {
+                    if input.contains(token) {
+                        match_weight += 10.0;
                     }
                 }
             }

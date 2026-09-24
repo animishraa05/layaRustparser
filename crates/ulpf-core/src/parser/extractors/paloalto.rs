@@ -58,10 +58,27 @@ impl PaloAltoExtractor {
         let in_iface = get(18).map(|s| s.to_string());
         let out_iface = get(19).map(|s| s.to_string());
         let session_id = get(22);
-        let src_port = get(24).and_then(|s| s.parse::<u16>().ok());
-        let dst_port = get(25).and_then(|s| s.parse::<u16>().ok());
         let proto_str = get(29).unwrap_or("");
         let action_str = get(30).unwrap_or("");
+        // ICMP (or a port column written as 0) carries no transport port — emit
+        // None, never Some(0); a TCP/UDP port of 0 is invalid and means "absent".
+        let is_icmp = proto_str.eq_ignore_ascii_case("icmp")
+            || proto_str.eq_ignore_ascii_case("icmp6")
+            || proto_str == "1";
+        let src_port = if is_icmp {
+            None
+        } else {
+            get(24)
+                .and_then(|s| s.parse::<u16>().ok())
+                .filter(|p| *p > 0)
+        };
+        let dst_port = if is_icmp {
+            None
+        } else {
+            get(25)
+                .and_then(|s| s.parse::<u16>().ok())
+                .filter(|p| *p > 0)
+        };
         let _bytes_total = get(31).and_then(|s| s.parse::<u64>().ok());
         let bytes_sent = get(32).and_then(|s| s.parse::<u64>().ok());
         let bytes_rcvd = get(33).and_then(|s| s.parse::<u64>().ok());
@@ -215,5 +232,20 @@ mod tests {
         assert_eq!(event.dst_endpoint.port, Some(53));
         assert_eq!(event.connection_info.protocol_name.as_deref(), Some("UDP"));
         assert_eq!(event.connection_info.protocol_num, Some(17));
+    }
+
+    #[test]
+    fn test_palo_alto_icmp_ports_none() {
+        // The proven drop fixture with ONLY values swapped: ports zeroed,
+        // proto udp -> icmp. Field alignment identical to the passing test.
+        let extractor = PaloAltoExtractor::new();
+        let raw = "Oct 15 10:20:30 my-pan-fw 1,2023/10/15 10:20:30,001801000000,TRAFFIC,drop,0,2023/10/15 10:20:30,10.0.0.5,1.1.1.1,10.0.0.5,1.1.1.1,block-external,,,dns,vsys1,inside,outside,eth1,eth2,default,0,999,1,0,0,0,0,0x0,icmp,drop,0,0,0,1";
+        let event = extractor.parse(raw).unwrap();
+
+        assert_eq!(event.src_endpoint.port, None, "ICMP has no source port");
+        assert_eq!(event.dst_endpoint.port, None, "ICMP has no dest port");
+        assert_eq!(event.connection_info.protocol_name.as_deref(), Some("ICMP"));
+        assert_eq!(event.connection_info.protocol_num, Some(1));
+        assert_eq!(event.disposition, disposition::DROPPED);
     }
 }

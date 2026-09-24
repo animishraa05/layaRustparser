@@ -140,6 +140,20 @@ impl FortigateExtractor {
             }
         }
 
+        // ICMP carries no transport ports: proto=1 (or port fields written as 0)
+        // must emit None, never Some(0) — OCSF endpoints have no port for ICMP.
+        if proto_num == Some(1) {
+            src_port = None;
+            dst_port = None;
+        } else {
+            if src_port == Some(0) {
+                src_port = None;
+            }
+            if dst_port == Some(0) {
+                dst_port = None;
+            }
+        }
+
         let now_ms = Utc::now().timestamp_millis();
         let event_time = match (date_str, time_str) {
             (Some(d), Some(t)) => parse_date_time_or_fallback(d, t, now_ms),
@@ -246,5 +260,28 @@ mod tests {
 
         assert_eq!(event.activity_id, activity_id::OTHER);
         assert_eq!(event.disposition, disposition::BLOCKED);
+    }
+
+    #[test]
+    fn test_fortigate_icmp_ports_none() {
+        let extractor = FortigateExtractor::new();
+        let raw = r#"date=2026-09-21 time=14:00:02 devname="FGT" type="traffic" subtype="forward" srcip=10.0.0.1 srcport=0 dstip=203.0.113.1 dstport=0 proto=1 action="accept""#;
+        let event = extractor.parse(raw).unwrap();
+
+        assert_eq!(event.src_endpoint.port, None, "ICMP has no source port");
+        assert_eq!(event.dst_endpoint.port, None, "ICMP has no dest port");
+        assert_eq!(event.connection_info.protocol_num, Some(1));
+        assert_eq!(event.connection_info.protocol_name.as_deref(), Some("ICMP"));
+        assert_eq!(event.disposition, disposition::ALLOWED);
+    }
+
+    #[test]
+    fn test_fortigate_timeout_session_end() {
+        let extractor = FortigateExtractor::new();
+        let raw = r#"date=2026-09-21 time=14:00:02 devname="FGT" type="traffic" srcip=10.0.0.1 srcport=29853 dstip=203.0.113.46 dstport=53 proto=17 action="timeout""#;
+        let event = extractor.parse(raw).unwrap();
+
+        assert_eq!(event.disposition, disposition::ALLOWED);
+        assert_eq!(event.activity_id, activity_id::CLOSE);
     }
 }

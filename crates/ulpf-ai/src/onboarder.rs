@@ -4,7 +4,7 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
-use std::net::Ipv4Addr;
+use std::net::IpAddr;
 use std::str::FromStr;
 use std::sync::Arc;
 use uuid::Uuid;
@@ -447,9 +447,9 @@ impl Onboarder {
             let src_ip_opt = caps.name("src_ip").map(|m| m.as_str());
             match src_ip_opt {
                 Some(ip_str) => {
-                    if Ipv4Addr::from_str(ip_str).is_err() {
+                    if IpAddr::from_str(ip_str).is_err() {
                         errors.push(format!(
-                            "Sample #{}: invalid IPv4 for src_ip: '{}'",
+                            "Sample #{}: invalid IP for src_ip: '{}'",
                             idx + 1,
                             ip_str
                         ));
@@ -469,9 +469,9 @@ impl Onboarder {
             let dst_ip_opt = caps.name("dst_ip").map(|m| m.as_str());
             match dst_ip_opt {
                 Some(ip_str) => {
-                    if Ipv4Addr::from_str(ip_str).is_err() {
+                    if IpAddr::from_str(ip_str).is_err() {
                         errors.push(format!(
-                            "Sample #{}: invalid IPv4 for dst_ip: '{}'",
+                            "Sample #{}: invalid IP for dst_ip: '{}'",
                             idx + 1,
                             ip_str
                         ));
@@ -595,7 +595,9 @@ impl Onboarder {
             (
                 "action",
                 Regex::new(r"\b(?:action|act)=").unwrap(),
-                r"(?:action|act)=(?P<action>[a-zA-Z]+)",
+                // Optional quotes: FortiGate writes `action="client-rst"` — the old
+                // `[a-zA-Z]+` neither tolerated quotes nor hyphens and failed validation.
+                r#"(?:action|act)="?(?P<action>[a-zA-Z0-9_-]+)"?"#,
             ),
             (
                 "src_ip",
@@ -691,29 +693,40 @@ impl Onboarder {
                     ));
                     ip_count += 1;
                     port_count += 1;
-                } else {
+                } else if ip_count == 1 {
                     parts.push(format!(
                         r"(?P<dst_ip>(?:\d{{1,3}}\.){{3}}\d{{1,3}}){}(?P<dst_port>\d{{1,5}})",
                         delimiter
                     ));
                     ip_count += 1;
                     port_count += 1;
+                } else {
+                    // 3rd+ ip/port column: NEVER reuse a capture-group name —
+                    // duplicate names make the regex fail to compile.
+                    parts.push(format!(
+                        r"(?:\d{{1,3}}\.){{3}}\d{{1,3}}{}\d{{1,5}}",
+                        delimiter
+                    ));
                 }
             } else if col.iter().all(|t| re_ip.is_match(t)) {
                 if ip_count == 0 {
                     parts.push(r"(?P<src_ip>(?:\d{1,3}\.){3}\d{1,3})".to_string());
                     ip_count += 1;
-                } else {
+                } else if ip_count == 1 {
                     parts.push(r"(?P<dst_ip>(?:\d{1,3}\.){3}\d{1,3})".to_string());
                     ip_count += 1;
+                } else {
+                    parts.push(r"(?:\d{1,3}\.){3}\d{1,3}".to_string());
                 }
             } else if col.iter().all(|t| re_port.is_match(t)) {
                 if port_count == 0 {
                     parts.push(r"(?P<src_port>\d{1,5})".to_string());
                     port_count += 1;
-                } else {
+                } else if port_count == 1 {
                     parts.push(r"(?P<dst_port>\d{1,5})".to_string());
                     port_count += 1;
+                } else {
+                    parts.push(r"(?:\d{1,5})".to_string());
                 }
             } else if col.iter().all(|t| re_proto.is_match(t)) {
                 parts.push(r"(?P<protocol>[a-zA-Z0-9]+)".to_string());
@@ -857,4 +870,72 @@ fn protocol_name_from_num(num: u8) -> &'static str {
 
 fn sanitize_ident(s: &str) -> String {
     s.chars().filter(|c| c.is_alphanumeric()).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// FortiGate-style kv samples with quoted, hyphenated action values must
+    /// synthesize a compiling regex that captures the full action token
+    /// (old `[a-zA-Z]+` pattern tolerated neither quotes nor hyphens).
+    #[test]
+    fn test_kv_capture_quoted_hyphenated_action() {
+        let samples = vec![
+            r#"date=2026-09-21 time=14:00:02 devname="FGT" srcip=10.1.1.1 srcport=1111 dstip=10.2.2.2 dstport=8443 proto=6 action="client-rst""#,
+            r#"date=2026-09-21 time=14:00:03 devname="FGT" srcip=10.1.1.2 srcport=2222 dstip=10.2.2.3 dstport=8444 proto=6 action="server-rst""#,
+            r#"date=2026-09-21 time=14:00:04 devname="FGT" srcip=10.1.1.3 srcport=3333 dstip=10.2.2.4 dstport=8445 proto=6 action="timeout""#,
+        ];
+        let pattern = Onboarder::synthesize_regex(&samples).unwrap();
+        let re = Regex::new(&pattern).expect("synthesized kv regex must compile");
+        for (s, expected) in samples.iter().zip(["client-rst", "server-rst", "timeout"]) {
+            let caps = re
+                .captures(s)
+                .unwrap_or_else(|| panic!("sample must match: {s}"));
+            assert_eq!(caps.name("action").unwrap().as_str(), expected);
+        }
+    }
+
+    /// A positional format with 3+ ip/port columns must never reuse a capture
+    /// group name (duplicate `dst_port` names made Regex::new fail at validation).
+    #[test]
+    fn test_positional_third_ip_port_column_unnamed() {
+        let samples = vec![
+            "edge-fw 192.0.2.1:1000 198.51.100.2:2000 203.0.113.3:3000 TCP accept",
+            "edge-fw 192.0.2.4:1001 198.51.100.5:2001 203.0.113.6:3001 TCP accept",
+            "edge-fw 192.0.2.7:1002 198.51.100.8:2002 203.0.113.9:3002 TCP accept",
+        ];
+        let pattern = Onboarder::synthesize_regex(&samples).unwrap();
+        let re = Regex::new(&pattern)
+            .expect("3rd ip/port column must be unnamed — duplicate group names must not occur");
+        let caps = re.captures(samples[0]).unwrap();
+        assert_eq!(caps.name("src_ip").unwrap().as_str(), "192.0.2.1");
+        assert_eq!(caps.name("dst_ip").unwrap().as_str(), "198.51.100.2");
+        assert!(caps.name("src_port").is_some());
+        assert!(caps.name("dst_port").is_some());
+    }
+
+    /// Sandbox validation accepts IPv6 endpoints (IpAddr, not Ipv4Addr).
+    #[test]
+    fn test_validation_accepts_ipv6_endpoints() {
+        let parser = ParserDefinition {
+            vendor: "test".into(),
+            device_model: "v6".into(),
+            regex_pattern:
+                r"^(?P<src_ip>[0-9a-fA-F:]+)/(?P<src_port>\d{1,5})->(?P<dst_ip>[0-9a-fA-F:]+)/(?P<dst_port>\d{1,5})$"
+                    .to_string(),
+            action_mappings: HashMap::new(),
+            sample_logs: vec![],
+            confidence_score: 1.0,
+            created_at: 0,
+        };
+        let samples = [
+            "2001:db8::1/443->2001:db8::2/80",
+            "2001:db8::3/443->2001:db8::4/80",
+            "2001:db8::5/443->2001:db8::6/80",
+        ];
+        let report = Onboarder::validate_parser(&parser, &samples).unwrap();
+        assert!(report.passed, "IPv6 must pass: {:?}", report.errors);
+        assert_eq!(report.match_percentage, 100.0);
+    }
 }

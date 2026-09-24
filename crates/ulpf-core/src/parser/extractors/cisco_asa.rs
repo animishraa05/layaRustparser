@@ -13,6 +13,7 @@ static REGEX_BUILT: OnceLock<Regex> = OnceLock::new();
 static REGEX_TEARDOWN: OnceLock<Regex> = OnceLock::new();
 static REGEX_DENY: OnceLock<Regex> = OnceLock::new();
 static REGEX_DENIED_CONN: OnceLock<Regex> = OnceLock::new();
+static REGEX_SESSION_DISCONNECT: OnceLock<Regex> = OnceLock::new();
 
 pub struct CiscoAsaExtractor;
 
@@ -37,6 +38,10 @@ impl CiscoAsaExtractor {
         REGEX_DENIED_CONN.get_or_init(|| {
             Regex::new(r"(?:(Inbound|Outbound)\s+)?([A-Za-z0-9]+)\s+connection\s+denied\s+from\s+([^\s]+)\s+to\s+([^\s]+)(?:.*?interface\s+([^\s]+))?")
                 .expect("Invalid ASA drop regex")
+        });
+        REGEX_SESSION_DISCONNECT.get_or_init(|| {
+            Regex::new(r"Group\s*=\s*([^,]+),\s*Username\s*=\s*([^,]+),\s*IP\s*=\s*([^,\s]+),\s*Session disconnected\.\s*Session Type:\s*([^,]+),\s*Duration:\s*([^,]+),\s*Bytes xmt:\s*(\d+),\s*Bytes rcv:\s*(\d+),\s*Reason:\s*(.+?)\s*$")
+                .expect("Invalid ASA session disconnect regex")
         });
 
         Self
@@ -234,6 +239,65 @@ impl CiscoAsaExtractor {
                 }
             }
 
+            // VPN session disconnect: %ASA-4-113019. No ports/protocol exist in the
+            // raw line — emit None (honest nulls, never fabricated values); a normal
+            // session end of permitted traffic is Allowed + CLOSE (OCSF).
+            "113019" => {
+                let disc_re = REGEX_SESSION_DISCONNECT.get().unwrap();
+                if let Some(caps) = disc_re.captures(body) {
+                    let group = caps.get(1).map(|m| m.as_str().trim());
+                    let username = caps.get(2).map(|m| m.as_str().trim());
+                    let peer_ip = caps.get(3).map(|m| m.as_str().trim());
+                    let session_type = caps.get(4).map(|m| m.as_str().trim());
+                    let duration = caps.get(5).map(|m| m.as_str().trim());
+                    let bytes_xmt = caps.get(6).and_then(|m| m.as_str().parse::<u64>().ok());
+                    let bytes_rcv = caps.get(7).and_then(|m| m.as_str().parse::<u64>().ok());
+                    let reason = caps.get(8).map(|m| m.as_str().trim());
+
+                    if let Some(g) = group {
+                        unmapped.insert("vpn_group".to_string(), g.to_string());
+                    }
+                    if let Some(u) = username {
+                        unmapped.insert("username".to_string(), u.to_string());
+                    }
+                    if let Some(s) = session_type {
+                        unmapped.insert("session_type".to_string(), s.to_string());
+                    }
+                    if let Some(d) = duration {
+                        unmapped.insert("duration".to_string(), d.to_string());
+                    }
+                    if let Some(r) = reason {
+                        unmapped.insert("disconnect_reason".to_string(), r.to_string());
+                    }
+
+                    let traffic = match (bytes_rcv, bytes_xmt) {
+                        (Some(rcv), Some(xmt)) => {
+                            Some(Traffic::new(Some(rcv), Some(xmt), None, None))
+                        }
+                        _ => None,
+                    };
+
+                    let src_endpoint =
+                        Endpoint::new(peer_ip.map(|s| s.to_string()), None, None, None);
+                    let product = Product::new("Cisco", "ASA", None);
+                    let metadata = Metadata::new(product, raw, "", "", now_ms);
+
+                    Ok(NetworkActivity::new(
+                        activity_id::CLOSE,
+                        now_ms,
+                        disposition::ALLOWED,
+                        src_endpoint,
+                        Endpoint::default(),
+                        ConnectionInfo::default(),
+                        traffic,
+                        metadata,
+                    )
+                    .with_unmapped(unmapped))
+                } else {
+                    self.fallback_parse(raw, message_code, body, now_ms, unmapped)
+                }
+            }
+
             // Other ASA message codes
             _ => self.fallback_parse(raw, message_code, body, now_ms, unmapped),
         }
@@ -387,5 +451,46 @@ mod tests {
         assert_eq!(event.src_endpoint.interface.as_deref(), Some("outside"));
         assert_eq!(event.dst_endpoint.ip.as_deref(), Some("10.0.0.2"));
         assert_eq!(event.dst_endpoint.port, Some(80));
+    }
+
+    #[test]
+    fn test_cisco_asa_session_disconnect_113019() {
+        let extractor = CiscoAsaExtractor::new();
+        let raw = "<164>Sep 21 14:00:12 asa-dc-01 %ASA-4-113019: Group = RemoteAccess-Corp, Username = agarcia, IP = 203.0.113.163, Session disconnected. Session Type: SSL, Duration: 0h:39m:20s, Bytes xmt: 32799774, Bytes rcv: 663531, Reason: User Requested";
+        let event = extractor.parse(raw).unwrap();
+
+        assert_eq!(event.activity_id, activity_id::CLOSE);
+        assert_eq!(event.disposition, disposition::ALLOWED);
+        assert_eq!(
+            event.src_endpoint.ip.as_deref(),
+            Some("203.0.113.163"),
+            "VPN peer IP is the session endpoint"
+        );
+        // No ports or protocol exist in this message — honest nulls
+        assert_eq!(event.src_endpoint.port, None);
+        assert_eq!(event.dst_endpoint.ip, None);
+        assert_eq!(event.connection_info.protocol_name, None);
+        assert_eq!(event.connection_info.protocol_num, None);
+        assert_eq!(
+            event.traffic.as_ref().and_then(|t| t.bytes_out),
+            Some(32799774)
+        );
+        assert_eq!(
+            event.traffic.as_ref().and_then(|t| t.bytes_in),
+            Some(663531)
+        );
+        let unmapped = event.unmapped.unwrap();
+        assert_eq!(
+            unmapped.get("username").map(|s| s.as_str()),
+            Some("agarcia")
+        );
+        assert_eq!(
+            unmapped.get("disconnect_reason").map(|s| s.as_str()),
+            Some("User Requested")
+        );
+        assert_eq!(
+            unmapped.get("vpn_group").map(|s| s.as_str()),
+            Some("RemoteAccess-Corp")
+        );
     }
 }

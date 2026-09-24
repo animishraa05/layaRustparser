@@ -501,3 +501,53 @@ fn test_template_validity_alignment() {
         "%ASA-6-302013"
     ));
 }
+
+/// Tier-3 must actually onboard a novel cluster: budgeted exemplar dispatch
+/// (>= 3 per cluster) + worker-side accumulator. The old single-exemplar rule
+/// starved `generate_parser` (which requires >= 3 samples), so onboarded == 0.
+#[test]
+fn test_tier3_onboards_novel_cluster_with_three_exemplars() {
+    use ulpf_ai::pipeline::TieredPipeline;
+
+    let pipeline = TieredPipeline::new();
+    let lines = [
+        r#"date=2026-09-21 time=14:00:02 devname="NOVEL-FW" type="traffic" subtype="forward" vd="root" srcip=10.11.1.1 srcport=1111 dstip=10.22.2.2 dstport=8443 proto=6 action="allow""#,
+        r#"date=2026-09-21 time=14:00:03 devname="NOVEL-FW" type="traffic" subtype="forward" vd="root" srcip=10.11.1.2 srcport=2222 dstip=10.22.2.3 dstport=8444 proto=6 action="allow""#,
+        r#"date=2026-09-21 time=14:00:04 devname="NOVEL-FW" type="traffic" subtype="forward" vd="root" srcip=10.11.1.3 srcport=3333 dstip=10.22.2.4 dstport=8445 proto=6 action="allow""#,
+    ];
+    for line in lines {
+        let _ = pipeline.process(line);
+    }
+    // Out-of-band worker drains the bounded channel asynchronously
+    std::thread::sleep(std::time::Duration::from_millis(500));
+
+    let stats = pipeline.stats();
+    assert!(
+        stats.tier3_laya_onboarded >= 1,
+        "novel cluster must onboard with >=3 exemplars (dispatched={}, onboarded={})",
+        stats.tier3_laya_dispatches,
+        stats.tier3_laya_onboarded
+    );
+    assert!(
+        stats.laya_action_flags > 0,
+        "classify_action head must be wired into triage outcome flags"
+    );
+}
+
+/// Laya fingerprint priors dominate structural priors: a line carrying another
+/// vendor's structural cues still classifies to the fingerprinted vendor.
+#[test]
+fn test_laya_fingerprint_dominates_structural_priors() {
+    use ulpf_ai::LayaDecisionEngine;
+
+    let engine = LayaDecisionEngine::new();
+    // `%ASA-` is a Cisco fingerprint; `session`/`Trust` are juniper/paloalto structural cues
+    let line = "%ASA-6-302013: Built outbound TCP connection 100 for outside:10.0.0.1/22 Trust session ge-0/0/0";
+    let choice = engine.classify_vendor(line);
+    assert_eq!(choice.label, "cisco_asa");
+    assert!(
+        choice.probability > 0.85,
+        "fingerprint hit must clear the gating threshold, got {}",
+        choice.probability
+    );
+}
