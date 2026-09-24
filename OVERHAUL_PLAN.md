@@ -299,7 +299,7 @@ Order is deliberate — cheapest/highest-confidence first, each with a full gate
 | # | Criterion | Exact form |
 |---|---|---|
 | 1 | Shared extraction safety | Differential test: native-path OCSF output **byte-identical** baseline vs tiered (modulo event_id/ingest_time) on all known-format corpus lines. Aggregate field-F1 ≥ baseline as a secondary check. |
-| 2 | Tier-2 quality | **TA strictly > naive baseline**; **GA ≥ naive baseline** (non-regression, not strict win — see §2.5); **template count strictly < naive baseline at equal GA** (compression/generalization is the real win); oracle ceiling reported alongside. |
+| 2 | Tier-2 quality | **TA > naive baseline whenever baseline < 100.00**; when the naive baseline itself sits at the metric's 100.00 ceiling (exact-mask templates are trivially valid → TA = 100 by construction), the strict `>` is arithmetically unreachable for **any** engine — a permanently-failing fake bar of exactly the class P1 exists to remove — so the bar there is **TA ≥ 100.00** (both engines perfect = honest parity; justification + measurement recorded at §8/P6.1); **GA ≥ naive baseline** (non-regression, not strict win — see §2.5); **template count strictly < naive baseline at equal GA** (compression/generalization is the real win); oracle ceiling reported alongside. |
 | 3 | Throughput | Measured EPS + p50/p99 before/after, identical corpus; tiered must not regress p50 > 5.0 µs; report delta, no target numbers invented. |
 | 4 | Tier-3 alive | `tier3_auto_onboarded > 0` on core corpus with 0 validation-gate failures (no bad drafts registered). |
 | 5 | Hard-data verification | Three-column scorecard (core/adversarial/holdout); holdout run **only at freeze**. Inviolability 100% across all corpora including kv-format fixtures. |
@@ -503,3 +503,55 @@ after a P6 step; p50 ≥ 5.0 µs after any step.
   protocol) = 0 on both engines** — only tiered `template` 108 + `grouping`
   40 remain, i.e. exactly the ASA message-code cross-merges → **P6.1** (the
   last red bar: GA/TA to 100 vs naive baseline's 100).
+
+### P6.1 — dynamic message-code anchors: last red bar cleared (`414df70`)
+- **Dump diagnosis:** all 148 remaining failures were ASA message-code
+  cross-merges (302013/302014/302015/106001 sharing clusters): the tag is
+  1 token of ~14 (sim ≈ 0.79 ≥ threshold 0.5, and ratchets toward 1.0 as
+  host/duration/verb positions generalize), so GA saw mixed GT tags and TA
+  lost the verbatim-GT-tag position to `<*>`.
+- **Three split-only mechanisms** (candidate filtering / similarity forcing —
+  can never lower GA or TA):
+  1. **Dynamic syslog tag anchors** — `LogCluster.syslog_tag` records the raw
+     `%FAC-SEV-CODE:` tag of the creating line (`#[serde(default)]`);
+     `find_best_match` enforces strict `Option` equality *before* similarity
+     (`None == None` for untagged formats — CEF/kv/CSV/JSON unaffected).
+     Shared `SYSLOG_TAG_PATTERN` const = the masker's `re_syslog_tag`
+     (single source of truth), so cluster tag-homogeneity ⇒ the
+     verbatim-GT-tag clause of `template_is_valid` holds by construction.
+  2. **kv-value anchor comparison (§2.7 gap closed)** — anchors evaluated on
+     `anchor_value()` forms: the VALUE of `key=value` / `"key":"value"`
+     tokens with quotes/commas trimmed, via allocation-free
+     `eq_ignore_ascii_case` (stays off the to_string budget). FortiGate
+     `act="accept"` vs `act="deny"` previously merged at sim ≈ 0.95
+     unguarded; now 0.0-forced like bare ASA verbs.
+  3. **Anchor vocabulary completion** — +ACCEPT/ALLOWED/DENIED/BLOCKED
+     (verdicts observed missing from §2.7 list) +BUILT/TEARDOWN/CLOSE/
+     CLOSED/RESET/RST (connection-lifecycle class from P6.1 spec).
+- **TDD (RED → GREEN):** both tests reproduced the exact corpus merges
+  before implementation — RED showed `302013 + 302015 → cluster 1` and
+  `kv accept + deny → cluster 1`; GREEN after enforcement, including the
+  observed ratchet sequence (302014 ×3 generalizing, then 106001 arrival)
+  and `syslog_tag_of` pinning (ASA → `Some(tag)`, kv → `None`).
+- **Post-P6.1 eval:** VCA 100.00/100.00 · **GA 100.00/100.00** ·
+  **TA 100.00/100.00** · disposition 100.00/100.00 · field F1 100.00/100.00 ·
+  p50 74.09/3.59 µs (<5.0 ✓) · Action Inviolability 100% PRESERVED ·
+  lossless 100% · LRU hit 100.00% · Tier-3 dispatches 96 · Tier-2 clusters
+  11 → **12** (one tag-driven split, as predicted) · unique templates
+  1081 vs **55** (19.7× compression, strict < at equal GA=100) ·
+  **audit dump 148 → 0 (zero failure records)**.
+- **§5.2 TA-ceiling amendment (criterion 2, with justification):** naive
+  baseline TA = 100.00 = the metric's ceiling, so the original "TA strictly
+  > naive baseline" was arithmetically unreachable for ANY engine — a
+  permanently-failing fake bar. Criterion amended to `> baseline when
+  baseline < 100.00; ≥ 100.00 at ceiling (parity = both perfect)`; report
+  label synced in `evaluator.rs`. GA `≥`, template-count strict `<`, and
+  oracle-ceiling clauses all stand and are met (GA 100 = 100; 55 < 1081;
+  oracle 100).
+- **Success-bar status after P6.1:** criterion 1 ✓ (differential
+  byte-identical + F1 ≥), 2 ✓, 3 ✓ (p50 3.59 µs, delta reported), 4 ✓
+  (96 dispatches), 6 ✓ — criterion 5 (three-column scorecard + frozen
+  holdout) remains for P7/P8.
+- **Tests 84 → 85** (`test_drain_syslog_message_code_anchors`; kv section
+  added to the existing anchor test). Gate: clippy 0 / fmt ok / workspace
+  green (85 tests).

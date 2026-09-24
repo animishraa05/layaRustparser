@@ -592,7 +592,7 @@ impl EvaluationReport {
                 b.accuracy.grouping_accuracy_ga_pct, t.accuracy.grouping_accuracy_ga_pct
             ));
             md.push_str(&format!(
-                "| **Loghub Template Accuracy (TA %)** | {:.2}% | {:.2}% | > Naive Baseline (§5.2) |\n",
+                "| **Loghub Template Accuracy (TA %)** | {:.2}% | {:.2}% | > Naive Baseline (§5.2); ≥ at 100% ceiling (see §5.2 amendment) |\n",
                 b.accuracy.template_accuracy_ta_pct, t.accuracy.template_accuracy_ta_pct
             ));
             md.push_str(&format!(
