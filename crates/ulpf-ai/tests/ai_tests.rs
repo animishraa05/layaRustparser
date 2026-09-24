@@ -943,3 +943,374 @@ fn test_null_correct_rule_still_fails_on_markers() {
     ));
     assert!(!E::raw_has_protocol_marker("greater things coming"));
 }
+
+// ============================================================================
+// P7 — CORPORA, SIDECAR GT, CLASS ANCHORS, ROBUSTNESS, FROZEN HOLDOUT
+// ============================================================================
+
+/// P7.1/P7.6: the committed adversarial corpus and its sidecar must agree
+/// record-for-record, carry the plan-mandated schema, cover every mutation
+/// class, and stay inside the ~1 MB committed budget.
+#[test]
+fn test_p7_adversarial_sidecar_schema() {
+    use std::collections::HashSet;
+    use std::path::Path;
+
+    // Integration tests run from the package root, not the repo root.
+    let base = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data/raw");
+    let log_path = base.join("adversarial/adversarial.log");
+    let gt_path = base.join("adversarial/gt.jsonl");
+    let log = std::fs::read_to_string(&log_path).expect("adversarial.log committed");
+    let gt = std::fs::read_to_string(&gt_path).expect("gt sidecar committed");
+    let raws: Vec<&str> = log.lines().filter(|l| !l.is_empty()).collect();
+    let recs: Vec<serde_json::Value> = gt
+        .lines()
+        .map(|l| serde_json::from_str(l).expect("sidecar line is valid JSON"))
+        .collect();
+    assert_eq!(raws.len(), recs.len(), "log and sidecar are 1:1");
+    assert!(raws.len() >= 500, "corpus must be substantial");
+
+    const DIFFICULTIES: [&str; 6] = [
+        "clean",
+        "truncation",
+        "relay",
+        "encoding",
+        "field-damage",
+        "cardinality",
+    ];
+    const VENDORS: [&str; 5] = ["Cisco", "Fortinet", "Palo Alto", "pfSense", "Suricata"];
+    const FIELD_KEYS: [&str; 5] = ["src_ip", "dst_ip", "src_port", "dst_port", "protocol"];
+    let mut classes: HashSet<&str> = HashSet::new();
+
+    for (raw, rec) in raws.iter().zip(recs.iter()) {
+        assert_eq!(
+            rec["raw"].as_str(),
+            Some(*raw),
+            "sidecar raw must be verbatim (overrides are keyed by it)"
+        );
+        for key in [
+            "raw",
+            "gt_vendor",
+            "gt_template_tag",
+            "gt_fields",
+            "gt_disposition",
+            "gt_protocol",
+            "difficulty",
+            "origin",
+        ] {
+            assert!(rec.get(key).is_some(), "record {} missing `{}`", raw, key);
+        }
+        assert!(VENDORS.contains(&rec["gt_vendor"].as_str().unwrap()));
+        assert!(!rec["gt_template_tag"].as_str().unwrap().is_empty());
+        assert!(!rec["origin"].as_str().unwrap().is_empty());
+        let difficulty = rec["difficulty"].as_str().unwrap();
+        assert!(
+            DIFFICULTIES.contains(&difficulty),
+            "bad difficulty {}",
+            difficulty
+        );
+        classes.insert(difficulty);
+        for key in FIELD_KEYS {
+            assert!(
+                rec["gt_fields"].get(key).is_some(),
+                "gt_fields missing {}",
+                key
+            );
+        }
+    }
+    for class in [
+        "truncation",
+        "relay",
+        "encoding",
+        "field-damage",
+        "cardinality",
+    ] {
+        assert!(
+            classes.contains(class),
+            "mutation class {} not covered",
+            class
+        );
+    }
+
+    // Holdout sidecar: same schema, separate seed, vendors never seen in core.
+    let hraw =
+        std::fs::read_to_string(base.join("holdout/holdout.log")).expect("holdout.log committed");
+    let hgt =
+        std::fs::read_to_string(base.join("holdout/gt.jsonl")).expect("holdout sidecar committed");
+    let hraws: Vec<&str> = hraw.lines().filter(|l| !l.is_empty()).collect();
+    let hrecs: Vec<serde_json::Value> = hgt
+        .lines()
+        .map(|l| serde_json::from_str(l).expect("holdout sidecar valid"))
+        .collect();
+    assert_eq!(hraws.len(), hrecs.len());
+    assert!(hraws.len() >= 100);
+    let hvendors: HashSet<&str> = hrecs
+        .iter()
+        .map(|r| r["gt_vendor"].as_str().unwrap())
+        .collect();
+    for v in ["MikroTik", "Juniper", "ZypherFire"] {
+        assert!(hvendors.contains(v), "holdout vendor {} missing", v);
+    }
+
+    // Plan P7.6: total committed corpus (logs + sidecars) ≈ ≤ 1 MB.
+    let mut total = 0usize;
+    for rel in [
+        "adversarial/adversarial.log",
+        "adversarial/gt.jsonl",
+        "holdout/holdout.log",
+        "holdout/gt.jsonl",
+        "cisco_asa_vpn.log",
+        "fortigate_utm.log",
+        "paloalto_threat.log",
+        "pfsense_ipv6.log",
+    ] {
+        let path = base.join(rel);
+        total += std::fs::metadata(&path)
+            .unwrap_or_else(|_| panic!("{} committed", path.display()))
+            .len() as usize;
+    }
+    assert!(
+        total < 1_200_000,
+        "committed corpus {} bytes exceeds the ~1MB budget",
+        total
+    );
+}
+
+/// P7.2: refined in-line GT — FGT subtypes and PAN THREAT carry their own
+/// grouping tags; ASA VPN/AAA verdict phrases map on both sides (this test
+/// pins the evaluator half; `parser_tests` pins the engine half).
+#[test]
+fn test_p7_gt_tag_refinements_and_vpn_aaa_vocab() {
+    use ulpf_ai::EvaluatorEngine;
+
+    let dns = r#"<189>date=2026-09-21 time=14:00:07 devname="FGT-CORP-FW01" logid="0001000013" type="dns" subtype="forward" level="info" vd="root" srcip=10.0.0.5 srcport=51000 dstip=198.51.100.9 dstport=53 sessionid=1000123 action="blocked" proto=17 qtype=A qname="evil.example.net""#;
+    let (v, tag, act) = EvaluatorEngine::extract_ground_truth(dns);
+    assert_eq!(v, "Fortinet");
+    assert_eq!(tag, "fortigate_dns");
+    assert_eq!(act.as_deref(), Some("Blocked"));
+
+    let utm = dns.replace(r#"type="dns""#, r#"type="utm""#);
+    let (_, tag, _) = EvaluatorEngine::extract_ground_truth(&utm);
+    assert_eq!(tag, "fortigate_utm");
+
+    let appctrl = dns.replace(r#"type="dns""#, r#"type="app-ctrl""#);
+    let (_, tag, _) = EvaluatorEngine::extract_ground_truth(&appctrl);
+    assert_eq!(tag, "fortigate_appctrl");
+
+    let traffic = dns.replace(r#"type="dns""#, r#"type="traffic""#);
+    let (_, tag, _) = EvaluatorEngine::extract_ground_truth(&traffic);
+    assert_eq!(tag, "fortigate_traffic", "core traffic tag is unchanged");
+
+    // PAN THREAT rows get their own tag (traffic rows keep panos_traffic)
+    let pan_threat = "1,2026/09/21 14:00:07,001801000099,THREAT,end,2304,2026/09/21 14:00:07,10.1.1.5,203.0.113.9,10.1.1.5,203.0.113.9,LAN_to_WAN,acme\\agarcia,,threat-scan,vsys1,LAN,WAN,ethernet1/1,ethernet1/2,default,,100412,1,49152,443,32768,443,0x400000,tcp,deny,512,256,768,4,2026/09/21 14:00:00,21,networking,0,100000155,0x0,192.168.0.0-192.168.255.255,US,0,612,8898,,0,0,0,0,vsys1,PA-5220-FW01,from-policy,,,0,0,0,,N/A,0,0,0,0";
+    let (v, tag, act) = EvaluatorEngine::extract_ground_truth(pan_threat);
+    assert_eq!(v, "Palo Alto");
+    assert_eq!(tag, "panos_threat");
+    assert_eq!(act.as_deref(), Some("Blocked"), "action column index 30");
+
+    // ASA VPN/AAA shared verdict vocabulary (engine half in parser_tests)
+    let aaa_ok = "<130>Sep 21 14:04:11 asa-vpn-gw01 %ASA-6-716059: Group = vpn-users, Username = jdoe, IP = 203.0.113.51, Successful login to server.";
+    let (_, _, act) = EvaluatorEngine::extract_ground_truth(aaa_ok);
+    assert_eq!(act.as_deref(), Some("Allowed"));
+
+    let aaa_fail = "<164>Sep 21 14:04:12 asa-vpn-gw01 %ASA-4-716060: Group = vpn-users, Username = root, IP = 203.0.113.51, authentication failed.";
+    let (_, _, act) = EvaluatorEngine::extract_ground_truth(aaa_fail);
+    assert_eq!(act.as_deref(), Some("Blocked"));
+
+    let vpn_ok = "<130>Sep 21 14:03:11 asa-vpn-gw01 %ASA-6-713041: Group = vpn-users, IP = 198.51.100.77, IPsec tunnel established.";
+    let (_, _, act) = EvaluatorEngine::extract_ground_truth(vpn_ok);
+    assert_eq!(act.as_deref(), Some("Allowed"));
+
+    let vpn_fail = "<164>Sep 21 14:03:12 asa-vpn-gw01 %ASA-4-713172: Group = vpn-users, IP = 198.51.100.77, IPsec tunnel, authentication failed from gateway.";
+    let (_, _, act) = EvaluatorEngine::extract_ground_truth(vpn_fail);
+    assert_eq!(act.as_deref(), Some("Blocked"));
+}
+
+/// P7.2 GA safety net: class partitions must never merge — kv `type=` values
+/// (key-aware class anchors) and PAN's CSV-split bare TRAFFIC/THREAT tokens
+/// (vocabulary anchors seen through `key="value"`).
+#[test]
+fn test_drain_class_partitions_never_merge() {
+    let mut miner = DrainMiner::new(DrainConfig::default());
+
+    // FGT: near-identical kv shape, same length node, sim ≈ 0.97 — only the
+    // `type=` class value and action differ.
+    let traffic = r#"<189>date=2026-09-21 time=14:00:05 devname="FGT-CORP-FW01" logid="0000000003" type="traffic" subtype="forward" level="notice" vd="root" srcip=192.168.5.14 srcport=50470 dstip=198.51.100.22 dstport=3389 sessionid=1000230 action="accept" proto=6"#;
+    let dns = r#"<189>date=2026-09-21 time=14:00:05 devname="FGT-CORP-FW01" logid="0001000013" type="dns" subtype="forward" level="notice" vd="root" srcip=192.168.5.14 srcport=50470 dstip=198.51.100.22 dstport=53 sessionid=1000230 action="blocked" proto=17"#;
+    let traffic2 = traffic
+        .replace("time=14:00:05", "time=14:00:09")
+        .replace("srcip=192.168.5.14", "srcip=192.168.7.45");
+
+    let r1 = miner.add_log(traffic);
+    let r2 = miner.add_log(dns);
+    let r3 = miner.add_log(&traffic2);
+    assert_ne!(
+        r1.cluster_id, r2.cluster_id,
+        "type= class values (traffic vs dns) must never share a cluster"
+    );
+    assert_eq!(
+        r1.cluster_id, r3.cluster_id,
+        "same class value must not over-split"
+    );
+
+    // PAN CSV rows tokenize comma-free-of-whitespace into fused tokens; the
+    // type token lands BARE at index 3 — TRAFFIC vs THREAT are anchored.
+    let pan_traffic = "1,2026/09/21 14:00:01,001801000001,TRAFFIC,start,2304,2026/09/21 14:00:01,192.168.1.19,203.0.113.87,192.168.1.19,203.0.113.87,Trust_to_Untrust,acme\\agarcia,,ping,vsys1,DMZ,WAN,ethernet1/1,ethernet1/2,default,,100412,1,0,0,0,0,0x400000,icmp,allow,4983547,454039,4529508,9510,2026/09/21 13:56:28,213,web-hosting,0,100000129,0x0,192.168.0.0-192.168.255.255,US,0,612,8898,,0,0,0,0,vsys1,PA-5220-FW01,from-policy,,,0,0,0,,N/A,0,0,0,0";
+    let pan_threat = pan_traffic
+        .replace(",TRAFFIC,", ",THREAT,")
+        .replace(",start,", ",end,");
+    let p1 = miner.add_log(pan_traffic);
+    let p2 = miner.add_log(&pan_threat);
+    assert_ne!(
+        p1.cluster_id, p2.cluster_id,
+        "PAN TRAFFIC vs THREAT class tokens are anchors"
+    );
+}
+
+/// P7.5: sidecar GT overrides are authoritative over in-line derivation —
+/// a deliberately LYING sidecar must flip the audit outcome, proving the
+/// override path is live (adversarial mutations destroy in-line markers,
+/// so the sidecar is the only honest GT source there).
+#[test]
+fn test_p7_sidecar_gt_overrides_are_authoritative() {
+    use ulpf_ai::evaluator::GtOverrides;
+    use ulpf_ai::EvaluatorEngine;
+    use ulpf_ai::SidecarGroundTruth;
+
+    let corpus = vec![
+        "<166>Sep 21 14:00:43 asa-edge-01 %ASA-6-302013: Built inbound TCP connection 1001322 for outside:203.0.113.137/993 (203.0.113.137/993) to inside:10.1.18.77/26375 (198.51.100.238/26375)".to_string(),
+        "<166>Sep 21 14:00:58 asa-vpn-gw01 %ASA-6-302013: Built outbound TCP connection 1000734 for outside:198.51.100.50/1433 (198.51.100.50/1433) to inside:10.1.18.77/16288 (198.51.100.227/16288)".to_string(),
+    ];
+
+    let mut lying = GtOverrides::new();
+    for raw in &corpus {
+        lying.insert(
+            raw.clone(),
+            SidecarGroundTruth {
+                raw: raw.clone(),
+                gt_vendor: "Fortinet".into(), // engine says Cisco -> must FAIL
+                gt_template_tag: "%ASA-6-302013:".into(),
+                gt_fields: serde_json::json!({
+                    "src_ip": null, "dst_ip": null,
+                    "src_port": null, "dst_port": null, "protocol": null,
+                }),
+                gt_disposition: Some("Allowed".into()),
+                gt_protocol: None,
+                difficulty: "clean".into(),
+                origin: "test:lying-sidecar".into(),
+            },
+        );
+    }
+
+    let report = EvaluatorEngine::evaluate_with_mode("tiered", &corpus, 1, 1, 100, &lying);
+    let t = report.tiered_pipeline.as_ref().unwrap();
+    assert_eq!(
+        t.accuracy.vendor_classification_accuracy_pct, 0.0,
+        "sidecar override must be authoritative (Cisco parsed, Fortinet GT)"
+    );
+
+    // Same corpus, no overrides: in-line GT agrees -> VCA 100.
+    let clean =
+        EvaluatorEngine::evaluate_with_mode("tiered", &corpus, 1, 1, 100, &GtOverrides::new());
+    let t2 = clean.tiered_pipeline.as_ref().unwrap();
+    assert_eq!(t2.accuracy.vendor_classification_accuracy_pct, 100.0);
+
+    // Robustness block: both lines parse without panics and stay lossless;
+    // all-null gt_fields leave nothing to grade (wrong=0, total=0).
+    assert_eq!(t.robustness.lines_total, 2);
+    assert_eq!(t.robustness.no_panic, 2);
+    assert_eq!(t.robustness.lossless_ok, 2);
+    assert_eq!(t.robustness.gt_fields_total, 0);
+    assert_eq!(t.robustness.gt_fields_wrong, 0);
+}
+
+/// P7.5 null-vs-wrong discipline against explicit sidecar gt_fields:
+/// matching values grade correct, honest nulls stay null, a WRONG non-null
+/// counts strictly worse than a null.
+#[test]
+fn test_p7_robustness_null_vs_wrong_discipline() {
+    use ulpf_ai::evaluator::GtOverrides;
+    use ulpf_ai::EvaluatorEngine;
+    use ulpf_ai::SidecarGroundTruth;
+
+    let good = "<166>Sep 21 14:00:43 asa-edge-01 %ASA-6-302013: Built inbound TCP connection 1001322 for outside:203.0.113.137/993 (203.0.113.137/993) to inside:10.1.18.77/26375 (198.51.100.238/26375)".to_string();
+    let corpus = vec![good.clone()];
+
+    let mut ov = GtOverrides::new();
+    ov.insert(
+        good.clone(),
+        SidecarGroundTruth {
+            raw: good.clone(),
+            gt_vendor: "Cisco".into(),
+            gt_template_tag: "%ASA-6-302013:".into(),
+            gt_fields: serde_json::json!({
+                "src_ip": "203.0.113.137",
+                "dst_ip": "10.1.18.77",
+                "src_port": 993,
+                "dst_port": 26375,
+                "protocol": "tcp",
+            }),
+            gt_disposition: Some("Allowed".into()),
+            gt_protocol: Some("tcp".into()),
+            difficulty: "clean".into(),
+            origin: "test:fields".into(),
+        },
+    );
+
+    let report = EvaluatorEngine::evaluate_with_mode("tiered", &corpus, 1, 1, 100, &ov);
+    let t = report.tiered_pipeline.as_ref().unwrap();
+    assert_eq!(t.robustness.gt_fields_total, 5);
+    assert_eq!(t.robustness.gt_fields_correct, 5, "all five fields grade");
+    assert_eq!(t.robustness.gt_fields_wrong, 0);
+    assert_eq!(t.robustness.gt_fields_null, 0);
+    assert_eq!(t.robustness.format_recognized, 1);
+
+    // A WRONG non-null (GT says 994, engine extracts 993) is strictly worse
+    // than an honest null — it must land in `wrong`, never `null`.
+    let mut wrong_ov = ov.clone();
+    wrong_ov.get_mut(&good).unwrap().gt_fields["src_port"] = serde_json::json!(994);
+    let report2 = EvaluatorEngine::evaluate_with_mode("tiered", &corpus, 1, 1, 100, &wrong_ov);
+    let t2 = report2.tiered_pipeline.as_ref().unwrap();
+    assert_eq!(t2.robustness.gt_fields_wrong, 1);
+    assert_eq!(t2.robustness.gt_fields_correct, 4);
+    assert_eq!(t2.robustness.gt_fields_null, 0);
+}
+
+/// P7.3/P8: the novel-vendor holdout is FROZEN — never executed until the
+/// final P8 freeze (plan §3 P7.3). Run at freeze via
+/// `cargo test -p ulpf-ai -- --ignored test_holdout`.
+#[test]
+#[ignore = "holdout frozen until the P8 final freeze"]
+fn test_holdout_novelty_end_to_end_at_freeze() {
+    use ulpf_ai::pipeline::TieredPipeline;
+    use ulpf_core::parser::compute_sha256;
+
+    let raws = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data/raw/holdout/holdout.log"),
+    )
+    .expect("holdout.log committed");
+    let lines: Vec<String> = raws
+        .lines()
+        .filter(|l| !l.is_empty())
+        .map(|s| s.to_string())
+        .collect();
+    assert!(!lines.is_empty());
+
+    let pipeline = TieredPipeline::new();
+    let mut novel_reached_tier3 = 0usize;
+    for raw in &lines {
+        let activity = pipeline.process(raw); // must never panic
+        assert_eq!(
+            activity.metadata.raw_hash,
+            compute_sha256(raw.as_bytes()),
+            "holdout line must stay lossless: {}",
+            raw
+        );
+        novel_reached_tier3 += 1;
+    }
+    let stats = pipeline.stats();
+    assert!(
+        stats.tier3_laya_dispatches > 0 || novel_reached_tier3 > 0,
+        "novel formats must traverse the pipeline without crashing"
+    );
+}

@@ -8,8 +8,9 @@ pub use drain::{
     AlertSeverity, AnomalyAlert, AnomalyType, ClusterResult, DrainConfig, DrainMiner, LogCluster,
 };
 pub use evaluator::{
-    AccuracyAuditSummary, BenchmarkTierResult, EvaluationReport, EvaluatorEngine,
-    HardwareThroughputSummary, LatencySummary, TierDiagnosticsSummary,
+    AccuracyAuditSummary, BenchmarkTierResult, EvaluationReport, EvaluatorEngine, GtOverrides,
+    HardwareThroughputSummary, LatencySummary, RobustnessSummary, SidecarGroundTruth,
+    TierDiagnosticsSummary,
 };
 pub use laya::{LayaChoice, LayaDecisionEngine, LayaNoul, LayaScore};
 pub use onboarder::{

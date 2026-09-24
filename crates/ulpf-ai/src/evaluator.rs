@@ -143,6 +143,8 @@ pub struct BenchmarkTierResult {
     pub tier_diagnostics: Option<TierDiagnosticsSummary>,
     /// Per-record audit mismatches (for `--audit-dump` JSONL export)
     pub failures: Vec<AuditFailure>,
+    /// P7 robustness block (panic/losslessness/format + null-vs-wrong fields)
+    pub robustness: RobustnessSummary,
 }
 
 /// Comprehensive side-by-side evaluation comparison report
@@ -160,6 +162,73 @@ pub struct EvaluationReport {
     pub bandwidth_speedup_factor: Option<f64>,
     pub latency_reduction_p50_pct: Option<f64>,
     pub latency_reduction_p99_pct: Option<f64>,
+    /// Which corpus was scored: `core` | `adversarial` | `holdout` (P7).
+    #[serde(default = "default_corpus_kind")]
+    pub corpus_kind: String,
+}
+
+fn default_corpus_kind() -> String {
+    "core".to_string()
+}
+
+/// P7.1 sidecar ground-truth record (`gt.jsonl`, one JSON object per raw
+/// line). Authoritative over in-line `extract_ground_truth` for its verbatim
+/// `raw` line: mutations (truncation / encoding / field-damage) destroy the
+/// in-line markers, so the sidecar is the only honest GT source on the
+/// adversarial and holdout corpora.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SidecarGroundTruth {
+    /// Verbatim raw line — also the override key.
+    pub raw: String,
+    pub gt_vendor: String,
+    pub gt_template_tag: String,
+    /// Expected engine fields. `null` = no expectation: counted `null`,
+    /// never `wrong` (P7 null-vs-wrong discipline).
+    pub gt_fields: serde_json::Value,
+    pub gt_disposition: Option<String>,
+    pub gt_protocol: Option<String>,
+    pub difficulty: String,
+    pub origin: String,
+}
+
+/// Sidecar overrides keyed by verbatim raw line, fed through `audit_accuracy`.
+pub type GtOverrides = HashMap<String, SidecarGroundTruth>;
+
+/// P7 robustness block: no-panic / losslessness / format recognition plus
+/// the null-vs-wrong field discipline against explicit sidecar expectations.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct RobustnessSummary {
+    /// Lines scored by the audit pass.
+    pub lines_total: usize,
+    /// Lines whose vendor was recognized as a known format (not `unknown`).
+    pub format_recognized: usize,
+    /// Lines parsed without a panic.
+    pub no_panic: usize,
+    /// Lines whose `raw_hash` still equals SHA-256(raw) byte-for-byte.
+    pub lossless_ok: usize,
+    /// Non-null sidecar `gt_fields` entries graded (correct + wrong).
+    pub gt_fields_total: usize,
+    /// Sidecar expectations the engine matched.
+    pub gt_fields_correct: usize,
+    /// Sidecar expectations the engine contradicted (strictly worse than null).
+    pub gt_fields_wrong: usize,
+    /// Sidecar entries that honestly expected nothing.
+    pub gt_fields_null: usize,
+}
+
+/// Load a `gt.jsonl` sidecar into raw-keyed overrides.
+pub fn load_sidecar_gt(path: &std::path::Path) -> anyhow::Result<GtOverrides> {
+    let text = std::fs::read_to_string(path)?;
+    let mut map = GtOverrides::new();
+    for (i, line) in text.lines().enumerate() {
+        if line.trim().is_empty() {
+            continue;
+        }
+        let rec: SidecarGroundTruth = serde_json::from_str(line)
+            .map_err(|e| anyhow::anyhow!("{}:{}: {}", path.display(), i + 1, e))?;
+        map.insert(rec.raw.clone(), rec);
+    }
+    Ok(map)
 }
 
 impl EvaluationReport {
@@ -493,10 +562,14 @@ impl EvaluationReport {
             self.threads
         ));
         md.push_str(&format!(
-            "**Duration:** {}s per engine | **Corpus:** {} logs ({:.2} KB)  \n\n",
+            "**Duration:** {}s per engine | **Corpus:** {} logs ({:.2} KB)  \n",
             self.duration_secs,
             self.corpus_size,
             self.corpus_total_bytes as f64 / 1024.0
+        ));
+        md.push_str(&format!(
+            "**Corpus Kind:** `{}` (core = fixed file set, adversarial/holdout = sidecar-GT corpora)  \n\n",
+            self.corpus_kind
         ));
         md.push_str("---\n\n");
 
@@ -536,6 +609,44 @@ impl EvaluationReport {
             md.push_str(&format!("| **Field Extraction Macro F1** | **{:.2}%** | **{:.2}%** | IP/Port/Proto Extraction |\n", b.accuracy.field_extraction_f1_pct, t.accuracy.field_extraction_f1_pct));
             md.push_str(&format!("| **Disposition Resolution Accuracy** | **{:.2}%** | **{:.2}%** | OCSF Action Mapping |\n", b.accuracy.disposition_accuracy_pct, t.accuracy.disposition_accuracy_pct));
             md.push_str("| **Action Inviolability** | N/A | **100% PRESERVED** | `ALLOW`/`DENY` isolated |\n\n");
+
+            md.push_str("## 1b. Corpus Robustness Scorecard (P7)\n\n");
+            md.push_str(
+                "| Robustness Dimension | Baseline | 3-Tier (`LRU+Drain+Laya`) | Gate Meaning |\n",
+            );
+            md.push_str("| :--- | ---: | ---: | :--- |\n");
+            md.push_str(&format!(
+                "| **Lines Audited** | {} | {} | Full corpus, every line scored |\n",
+                b.robustness.lines_total, t.robustness.lines_total
+            ));
+            md.push_str(&format!(
+                "| **Format Recognized** | {} | {} | Vendor routed to a known format (not `unknown`) |\n",
+                b.robustness.format_recognized, t.robustness.format_recognized
+            ));
+            md.push_str(&format!(
+                "| **No Panic** | {} | {} | `catch_unwind` parse, zero aborts |\n",
+                b.robustness.no_panic, t.robustness.no_panic
+            ));
+            md.push_str(&format!(
+                "| **Lossless (SHA-256 match)** | {} | {} | `raw_hash` == SHA-256(raw), byte-exact |\n",
+                b.robustness.lossless_ok, t.robustness.lossless_ok
+            ));
+            md.push_str(&format!(
+                "| **Sidecar GT fields graded** | {} | {} | Non-null expectations (correct + wrong) |\n",
+                b.robustness.gt_fields_total, t.robustness.gt_fields_total
+            ));
+            md.push_str(&format!(
+                "| **GT fields correct** | {} | {} | Engine matched the expectation |\n",
+                b.robustness.gt_fields_correct, t.robustness.gt_fields_correct
+            ));
+            md.push_str(&format!(
+                "| **GT fields wrong** | {} | {} | Contradicted expectation (strictly worse than null) |\n",
+                b.robustness.gt_fields_wrong, t.robustness.gt_fields_wrong
+            ));
+            md.push_str(&format!(
+                "| **GT fields null (honest)** | {} | {} | No expectation — excluded from wrong |\n\n",
+                b.robustness.gt_fields_null, t.robustness.gt_fields_null
+            ));
 
             md.push_str("## 2. Microsecond Latency Spectrum\n\n");
             md.push_str("| Percentile Observation | Baseline (µs) | 3-Tier Engine (µs) | Latency Reduction |\n");
@@ -643,19 +754,32 @@ pub struct EvaluatorEngine;
 impl EvaluatorEngine {
     /// Run comprehensive dual-architecture benchmark with isolated sequential passes and CPU cooldown
     pub fn evaluate(corpus: &[String], duration_secs: u64, threads: usize) -> EvaluationReport {
-        Self::evaluate_with_mode("all", corpus, duration_secs, threads, 10_000)
+        Self::evaluate_with_mode(
+            "all",
+            corpus,
+            duration_secs,
+            threads,
+            10_000,
+            &GtOverrides::new(),
+        )
     }
 
-    /// Run benchmark with specific execution mode: "all", "baseline", or "tiered"
+    /// Run benchmark with specific execution mode: "all", "baseline", or "tiered".
+    ///
+    /// `gt_overrides` are P7 sidecar GT records keyed by verbatim raw line;
+    /// they are authoritative over in-line derivation for their line (empty
+    /// map = pure in-line GT, the historical behaviour).
     pub fn evaluate_with_mode(
         mode: &str,
         corpus: &[String],
         duration_secs: u64,
         threads: usize,
         latency_samples: usize,
+        gt_overrides: &GtOverrides,
     ) -> EvaluationReport {
         let corpus_total_bytes: usize = corpus.iter().map(|s| s.len()).sum();
         let corpus_arc = Arc::new(corpus.to_vec());
+        let gt_arc = Arc::new(gt_overrides.clone());
 
         let baseline_res = if mode == "all" || mode == "baseline" {
             let res = Self::benchmark_baseline_isolated(
@@ -663,6 +787,7 @@ impl EvaluatorEngine {
                 duration_secs,
                 threads,
                 latency_samples,
+                gt_arc.clone(),
             );
             if mode == "all" {
                 // Cooldown: pause 500ms to allow CPU thermal throttles and OS caches to settle
@@ -679,6 +804,7 @@ impl EvaluatorEngine {
                 duration_secs,
                 threads,
                 latency_samples,
+                gt_arc.clone(),
             );
             Some(res)
         } else {
@@ -710,6 +836,7 @@ impl EvaluatorEngine {
             bandwidth_speedup_factor: speedup_bw,
             latency_reduction_p50_pct: p50_reduct,
             latency_reduction_p99_pct: p99_reduct,
+            corpus_kind: "core".to_string(),
         }
     }
 
@@ -719,6 +846,7 @@ impl EvaluatorEngine {
         duration_secs: u64,
         threads: usize,
         latency_samples: usize,
+        gt_overrides: Arc<GtOverrides>,
     ) -> BenchmarkTierResult {
         // Warmup pass (200ms)
         {
@@ -800,7 +928,7 @@ impl EvaluatorEngine {
         );
 
         // Exhaustive Accuracy Audit
-        let (accuracy, failures) = Self::audit_accuracy(
+        let (accuracy, robustness, failures) = Self::audit_accuracy(
             |raw| {
                 let parser = UniversalParser::new();
                 parser.parse_lossless(raw)
@@ -819,6 +947,7 @@ impl EvaluatorEngine {
                 (cluster_id, masked)
             },
             &corpus,
+            &gt_overrides,
         );
 
         BenchmarkTierResult {
@@ -828,6 +957,7 @@ impl EvaluatorEngine {
             accuracy,
             tier_diagnostics: None,
             failures,
+            robustness,
         }
     }
 
@@ -837,6 +967,7 @@ impl EvaluatorEngine {
         duration_secs: u64,
         threads: usize,
         latency_samples: usize,
+        gt_overrides: Arc<GtOverrides>,
     ) -> BenchmarkTierResult {
         let pipeline = Arc::new(TieredPipeline::new());
 
@@ -918,13 +1049,14 @@ impl EvaluatorEngine {
 
         let mut miner = DrainMiner::new(DrainConfig::default());
         let pipe_for_acc = pipeline.clone();
-        let (accuracy, failures) = Self::audit_accuracy(
+        let (accuracy, robustness, failures) = Self::audit_accuracy(
             move |raw| pipe_for_acc.process(raw),
             move |raw| {
                 let res = miner.add_log(raw);
                 (res.cluster_id, res.template)
             },
             &corpus,
+            &gt_overrides,
         );
 
         let dedupe_pct = if total > 0 {
@@ -955,6 +1087,7 @@ impl EvaluatorEngine {
             accuracy,
             tier_diagnostics,
             failures,
+            robustness,
         }
     }
 
@@ -1033,30 +1166,56 @@ impl EvaluatorEngine {
                 "%ASA".to_string()
             };
 
-            let action = if raw.contains("Built") || raw.contains("permit") {
-                Some("Allowed".to_string())
-            } else if raw.contains("Deny") || raw.contains("drop") {
-                // OCSF: deny-by-policy is Blocked (disposition_id 2), never Dropped
-                Some("Blocked".to_string())
-            } else if raw.contains("Teardown") {
-                Some("Allowed".to_string())
-            } else {
-                None
-            };
+            // P7.2 shared VPN/AAA verdict vocabulary (engine half:
+            // `cisco_asa::fallback_parse` — keep BOTH sides in lockstep).
+            // Failure phrases win first: a line can mention both a tunnel
+            // and a failed authentication.
+            let lower = raw.to_ascii_lowercase();
+            let action =
+                if lower.contains("authentication failed") || lower.contains("login failed") {
+                    Some("Blocked".to_string())
+                } else if raw.contains("Built")
+                    || raw.contains("permit")
+                    || lower.contains("successful login")
+                    || lower.contains("tunnel established")
+                {
+                    Some("Allowed".to_string())
+                } else if raw.contains("Deny") || raw.contains("drop") {
+                    // OCSF: deny-by-policy is Blocked (disposition_id 2), never Dropped
+                    Some("Blocked".to_string())
+                } else if raw.contains("Teardown") {
+                    Some("Allowed".to_string())
+                } else {
+                    None
+                };
             ("Cisco".to_string(), tag, action)
         } else if raw.contains("devname=")
             || raw.contains("type=\"traffic\"")
             || raw.contains("logid=")
         {
             let action = Self::action_from_kv_token(raw, "action=");
-            (
-                "Fortinet".to_string(),
-                "fortigate_traffic".to_string(),
-                action,
-            )
+            // P7.2 subtype-aware grouping tag: traffic/dns/utm/app-ctrl are
+            // distinct FortiGate log classes (Drain's key-aware class anchor
+            // partitions them; GA keeps each cluster pure). Absent or
+            // `type="traffic"` keeps the historical `fortigate_traffic` tag —
+            // the core corpus is traffic-only, so nothing regresses.
+            let tag = match Self::kv_value_word(raw, "type=") {
+                Some("dns") => "fortigate_dns",
+                Some("utm") => "fortigate_utm",
+                Some("app-ctrl") => "fortigate_appctrl",
+                _ => "fortigate_traffic",
+            };
+            ("Fortinet".to_string(), tag.to_string(), action)
         } else if raw.contains(",TRAFFIC,") || raw.contains(",THREAT,") {
             let action = Self::panos_action_field(raw);
-            ("Palo Alto".to_string(), "panos_traffic".to_string(), action)
+            // P7.2: THREAT rows are their own class (anchored in Drain via
+            // the bare TRAFFIC/THREAT tokens).
+            let tag = if raw.contains(",THREAT,") {
+                "panos_threat"
+            } else {
+                "panos_traffic"
+            };
+            ("Palo Alto".to_string(), tag.to_string(), action)
         } else if raw.starts_with('{') || raw.contains("\"event_type\"") {
             // Suricata EVE: an explicit `action` inside the event is authoritative
             // (alert with "action": "allowed" means the traffic WAS allowed);
@@ -1117,6 +1276,21 @@ impl EvaluatorEngine {
                     }
                     _ => None,
                 };
+            }
+        }
+        None
+    }
+
+    /// Value of a whitespace-delimited `key="value"` token in `raw`, as the
+    /// bare word form (`type="dns"` -> `dns`); `None` when the key is absent
+    /// or the value is empty. Borrows `raw` — no allocation.
+    fn kv_value_word<'a>(raw: &'a str, key: &str) -> Option<&'a str> {
+        for token in raw.split_whitespace() {
+            if let Some(value) = token.strip_prefix(key) {
+                let value = value.trim_matches(|c: char| {
+                    c == '"' || c == '\'' || c == ',' || c == ';' || c.is_whitespace()
+                });
+                return if value.is_empty() { None } else { Some(value) };
             }
         }
         None
@@ -1440,16 +1614,25 @@ impl EvaluatorEngine {
 
     /// Audit comprehensive schema, semantic, and academic clustering accuracy.
     ///
-    /// Returns the summary plus every per-record mismatch (for `--audit-dump` JSONL).
+    /// Returns the summary, the P7 robustness block, and every per-record
+    /// mismatch (for `--audit-dump` JSONL).
     /// Oracle GA (clusters built from the ground-truth tag itself) is computed
     /// alongside the primary GA and reported only as a labeled ceiling — never as
     /// a fair baseline. The fair baseline engine is the naive post-mask exact-match
     /// clustering passed in via `cluster_fn` on the baseline side.
+    ///
+    /// P7.5: `gt_overrides` (sidecar GT keyed by verbatim raw line) are
+    /// authoritative over in-line derivation for their line — mutations
+    /// destroy in-line markers, so the sidecar is the only honest GT source
+    /// on the adversarial/holdout corpora. Parsing runs under `catch_unwind`:
+    /// a panic must be observable (`no_panic` + a `panic` failure), never a
+    /// process abort.
     fn audit_accuracy<F, C>(
         mut parse_fn: F,
         mut cluster_fn: C,
         corpus: &[String],
-    ) -> (AccuracyAuditSummary, Vec<AuditFailure>)
+        gt_overrides: &GtOverrides,
+    ) -> (AccuracyAuditSummary, RobustnessSummary, Vec<AuditFailure>)
     where
         F: FnMut(&str) -> NetworkActivity,
         C: FnMut(&str) -> (usize, String),
@@ -1457,6 +1640,7 @@ impl EvaluatorEngine {
         // Full-coverage audit: every corpus line is scored. The former
         // `1000.min(...)` cap silently excluded all pfSense records.
         let audit_count = corpus.len();
+        let mut rob = RobustnessSummary::default();
         let mut vendor_correct = 0;
         let mut sha_matches = 0;
         let mut uuid_valid = 0;
@@ -1477,9 +1661,20 @@ impl EvaluatorEngine {
         let mut records: Vec<(usize, usize, String)> = Vec::with_capacity(audit_count);
 
         for (idx, raw) in corpus.iter().enumerate() {
-            let (gt_vendor, gt_template, gt_action) = Self::extract_ground_truth(raw);
+            rob.lines_total += 1;
 
-            let activity = parse_fn(raw);
+            // P7.5 GT seam: sidecar override is authoritative for its
+            // verbatim line (vendor + template tag + disposition).
+            let sidecar = gt_overrides.get(raw);
+            let (gt_vendor, gt_template, gt_action) = match sidecar {
+                Some(sc) => (
+                    sc.gt_vendor.clone(),
+                    sc.gt_template_tag.clone(),
+                    sc.gt_disposition.clone(),
+                ),
+                None => Self::extract_ground_truth(raw),
+            };
+
             let (cluster_id, template_str) = cluster_fn(raw);
             records.push((idx, cluster_id, gt_template.clone()));
 
@@ -1513,9 +1708,39 @@ impl EvaluatorEngine {
                 ));
             }
 
+            // P7 robustness: the parse must never panic — and if it ever did,
+            // the failure is recorded here instead of aborting the process.
+            let parsed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| parse_fn(raw)));
+            let activity = match parsed {
+                Ok(activity) => {
+                    rob.no_panic += 1;
+                    activity
+                }
+                Err(_) => {
+                    // A panicked parse is strictly worse than a null: every
+                    // non-null sidecar expectation grades WRONG.
+                    if let Some(sc) = sidecar {
+                        Self::grade_gt_fields(&sc.gt_fields, None, &mut rob);
+                    }
+                    failures.push(AuditFailure::new(
+                        "panic",
+                        idx,
+                        raw,
+                        "parse without panic",
+                        "panicked",
+                        cluster_id,
+                    ));
+                    continue;
+                }
+            };
+
             // 3. Vendor Classification Accuracy (explicit label map, never fuzzy)
             let parsed_vendor_raw = activity.metadata.product.vendor_name.to_ascii_lowercase();
             let parsed_vendor = Self::map_audit_vendor(&parsed_vendor_raw);
+            if parsed_vendor != "unknown" {
+                // P7 robustness: the engine recognized a known format.
+                rob.format_recognized += 1;
+            }
             let expected_vendor = gt_vendor.to_ascii_lowercase();
             if parsed_vendor.contains(&expected_vendor) || expected_vendor.contains(parsed_vendor) {
                 vendor_correct += 1;
@@ -1533,6 +1758,7 @@ impl EvaluatorEngine {
             // 4. SHA-256 Digest & UUID
             if activity.metadata.raw_hash == compute_sha256(raw.as_bytes()) {
                 sha_matches += 1;
+                rob.lossless_ok += 1;
             }
             if Uuid::parse_str(&activity.metadata.event_id).is_ok() {
                 uuid_valid += 1;
@@ -1663,6 +1889,13 @@ impl EvaluatorEngine {
                     cluster_id,
                 ));
             }
+
+            // 9. P7 sidecar field grading (null-vs-wrong discipline): a
+            //    non-null expectation grades correct/wrong, an honest null
+            //    only counts as null — never silently skipped.
+            if let Some(sc) = sidecar {
+                Self::grade_gt_fields(&sc.gt_fields, Some(&activity), &mut rob);
+            }
         }
 
         // Calculate LogPai Grouping Accuracy (GA %): sum of majority classes per cluster / total
@@ -1733,7 +1966,75 @@ impl EvaluatorEngine {
             oracle_ga_pct,
             unique_clusters,
         };
-        (summary, failures)
+        (summary, rob, failures)
+    }
+
+    /// Grade sidecar `gt_fields` against the parse result (P7 null-vs-wrong):
+    /// non-null expectations count in `gt_fields_total` and resolve to
+    /// correct/wrong; honest nulls count only in `gt_fields_null`.
+    /// `activity` is `None` on a panicked parse — every non-null expectation
+    /// is then `wrong`, never laundered into `null`.
+    fn grade_gt_fields(
+        gt_fields: &serde_json::Value,
+        activity: Option<&NetworkActivity>,
+        rob: &mut RobustnessSummary,
+    ) {
+        const KEYS: [&str; 5] = ["src_ip", "dst_ip", "src_port", "dst_port", "protocol"];
+        for key in KEYS {
+            let expected = gt_fields.get(key);
+            if matches!(expected, None | Some(serde_json::Value::Null)) {
+                rob.gt_fields_null += 1;
+                continue;
+            }
+            let expected = expected.expect("checked non-null above");
+            rob.gt_fields_total += 1;
+            let observed = match activity {
+                Some(a) => Self::engine_field_value(a, key),
+                None => serde_json::Value::Null,
+            };
+            if Self::gt_value_matches(expected, &observed) {
+                rob.gt_fields_correct += 1;
+            } else {
+                rob.gt_fields_wrong += 1;
+            }
+        }
+    }
+
+    /// Engine-observed value for one audited field key, sidecar-comparable.
+    fn engine_field_value(activity: &NetworkActivity, key: &str) -> serde_json::Value {
+        let strv = |o: &Option<String>| {
+            o.clone()
+                .map(serde_json::Value::String)
+                .unwrap_or(serde_json::Value::Null)
+        };
+        match key {
+            "src_ip" => strv(&activity.src_endpoint.ip),
+            "dst_ip" => strv(&activity.dst_endpoint.ip),
+            "src_port" => activity
+                .src_endpoint
+                .port
+                .map(serde_json::Value::from)
+                .unwrap_or(serde_json::Value::Null),
+            "dst_port" => activity
+                .dst_endpoint
+                .port
+                .map(serde_json::Value::from)
+                .unwrap_or(serde_json::Value::Null),
+            _ => strv(&activity.connection_info.protocol_name),
+        }
+    }
+
+    /// Sidecar expectation vs engine value: strings compare ASCII-insensitively
+    /// (`TCP` vs `tcp` is the same protocol), numbers exactly, everything else
+    /// strictly. `null` observed vs non-null expected is always a mismatch.
+    fn gt_value_matches(expected: &serde_json::Value, observed: &serde_json::Value) -> bool {
+        match (expected, observed) {
+            (serde_json::Value::String(a), serde_json::Value::String(b)) => {
+                a.eq_ignore_ascii_case(b)
+            }
+            (serde_json::Value::Number(a), serde_json::Value::Number(b)) => a == b,
+            _ => expected == observed,
+        }
     }
 
     /// Verify that DrainDotNet anchor tokens preserve action disposition separation

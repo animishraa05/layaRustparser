@@ -7,13 +7,13 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
-use clap::{Args, Parser, Subcommand};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 use tokio::sync::mpsc;
 use tracing::{info, warn};
 use tracing_subscriber::EnvFilter;
 
 use ulpf_ai::drain::{AlertSeverity, DrainConfig, DrainMiner};
-use ulpf_ai::evaluator::EvaluatorEngine;
+use ulpf_ai::evaluator::{load_sidecar_gt, EvaluatorEngine, GtOverrides};
 use ulpf_ai::onboarder::{DynamicParserRegistry, Onboarder};
 use ulpf_core::ingest::socket::{create_tcp_listener, create_udp_socket};
 use ulpf_core::parser::UniversalParser;
@@ -157,6 +157,26 @@ struct BenchmarkArgs {
     compare: bool,
 }
 
+/// Corpus variant for `evaluate` (P7): `core` = the fixed file set incl. the
+/// format-expansion files, `adversarial` / `holdout` = sidecar-GT corpora
+/// whose `gt.jsonl` is authoritative over in-line ground truth.
+#[derive(Clone, Copy, Debug, PartialEq, ValueEnum)]
+enum CorpusKind {
+    Core,
+    Adversarial,
+    Holdout,
+}
+
+impl CorpusKind {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Core => "core",
+            Self::Adversarial => "adversarial",
+            Self::Holdout => "holdout",
+        }
+    }
+}
+
 #[derive(Args, Debug)]
 struct EvaluateArgs {
     /// Path to raw dataset directory
@@ -166,6 +186,10 @@ struct EvaluateArgs {
     /// Target architecture engine: 'all' (compare both), 'baseline' (UniversalParser only), 'tiered' (LRU+DrainDotNet+Laya only)
     #[arg(short, long, default_value = "all")]
     engine: String,
+
+    /// Corpus variant to score: core (fixed file set), adversarial (mutated + sidecar GT), holdout (frozen novel vendors)
+    #[arg(long, value_enum, default_value = "core")]
+    corpus: CorpusKind,
 
     /// Duration of benchmark in seconds per engine
     #[arg(short, long, default_value_t = 3)]
@@ -614,6 +638,7 @@ async fn run_benchmark(args: BenchmarkArgs) -> Result<()> {
         let eval_args = EvaluateArgs {
             data_dir: args.data_dir,
             engine: "all".into(),
+            corpus: CorpusKind::Core,
             duration: args.duration,
             threads: args.threads,
             samples: 10000,
@@ -771,6 +796,7 @@ async fn run_evaluate(args: EvaluateArgs) -> Result<()> {
         "  Target Engine      : \x1b[1;33m{}\x1b[0m",
         args.engine.to_uppercase()
     );
+    println!("  Corpus Variant     : {}", args.corpus.as_str());
     println!("  Evaluation Duration: {}s per architecture", args.duration);
     println!("  Parallel Workers   : {} CPU threads", args.threads);
     println!("  Latency Samples    : {} observations", args.samples);
@@ -780,16 +806,9 @@ async fn run_evaluate(args: EvaluateArgs) -> Result<()> {
     );
 
     let mut corpus: Vec<String> = Vec::new();
-    let files = vec![
-        "cisco_asa.log",
-        "fortigate.log",
-        "paloalto.log",
-        "suricata.json",
-        "pfsense.log",
-    ];
+    let mut gt_overrides: GtOverrides = GtOverrides::new();
 
-    for file_name in files {
-        let p = args.data_dir.join(file_name);
+    let push_file = |corpus: &mut Vec<String>, p: PathBuf| -> Result<()> {
         if p.exists() {
             let f = File::open(&p)?;
             let reader = BufReader::new(f);
@@ -799,6 +818,42 @@ async fn run_evaluate(args: EvaluateArgs) -> Result<()> {
                     corpus.push(trimmed);
                 }
             }
+        }
+        Ok(())
+    };
+
+    match args.corpus {
+        CorpusKind::Core => {
+            // Fixed core file set incl. the P7 format-expansion files
+            // (ASA VPN/AAA, FGT dns/utm/app-ctrl, PAN THREAT, pfSense IPv6).
+            for file_name in [
+                "cisco_asa.log",
+                "fortigate.log",
+                "paloalto.log",
+                "suricata.json",
+                "pfsense.log",
+                "cisco_asa_vpn.log",
+                "fortigate_utm.log",
+                "paloalto_threat.log",
+                "pfsense_ipv6.log",
+            ] {
+                push_file(&mut corpus, args.data_dir.join(file_name))?;
+            }
+        }
+        CorpusKind::Adversarial | CorpusKind::Holdout => {
+            // Sidecar-GT corpora: one dir with `<name>.log` + `gt.jsonl`.
+            let (subdir, log_name) = match args.corpus {
+                CorpusKind::Adversarial => ("adversarial", "adversarial.log"),
+                _ => ("holdout", "holdout.log"),
+            };
+            let dir = args.data_dir.join(subdir);
+            push_file(&mut corpus, dir.join(log_name))?;
+            gt_overrides = load_sidecar_gt(&dir.join("gt.jsonl"))
+                .with_context(|| format!("loading sidecar GT from {}", dir.display()))?;
+            println!(
+                "[+] Loaded {} sidecar GT overrides (authoritative over in-line GT).",
+                gt_overrides.len()
+            );
         }
     }
 
@@ -819,13 +874,15 @@ async fn run_evaluate(args: EvaluateArgs) -> Result<()> {
         args.engine, args.threads
     );
 
-    let report = EvaluatorEngine::evaluate_with_mode(
+    let mut report = EvaluatorEngine::evaluate_with_mode(
         &args.engine,
         &corpus,
         args.duration,
         args.threads,
         args.samples,
+        &gt_overrides,
     );
+    report.corpus_kind = args.corpus.as_str().to_string();
 
     // Print rich terminal comparison table
     println!("{}", report.render_terminal_dashboard());
