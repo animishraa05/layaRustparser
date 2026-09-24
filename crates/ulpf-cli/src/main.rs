@@ -839,6 +839,19 @@ async fn run_evaluate(args: EvaluateArgs) -> Result<()> {
             ] {
                 push_file(&mut corpus, args.data_dir.join(file_name))?;
             }
+            // Optional sidecar: if the data dir ships a `gt.jsonl` (the
+            // full-dataset run generates one), grade against it with the
+            // same authority as the adversarial/holdout corpora. Absent —
+            // the default `data/raw` — behavior is unchanged (in-line GT).
+            let sidecar = args.data_dir.join("gt.jsonl");
+            if sidecar.exists() {
+                gt_overrides = load_sidecar_gt(&sidecar)
+                    .with_context(|| format!("loading sidecar GT from {}", sidecar.display()))?;
+                println!(
+                    "[+] Loaded {} sidecar GT overrides (authoritative over in-line GT).",
+                    gt_overrides.len()
+                );
+            }
         }
         CorpusKind::Adversarial | CorpusKind::Holdout => {
             // Sidecar-GT corpora: one dir with `<name>.log` + `gt.jsonl`.

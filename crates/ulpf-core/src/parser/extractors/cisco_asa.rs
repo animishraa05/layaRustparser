@@ -13,6 +13,7 @@ static REGEX_BUILT: OnceLock<Regex> = OnceLock::new();
 static REGEX_TEARDOWN: OnceLock<Regex> = OnceLock::new();
 static REGEX_DENY: OnceLock<Regex> = OnceLock::new();
 static REGEX_DENIED_CONN: OnceLock<Regex> = OnceLock::new();
+static REGEX_DROPPED_ACL: OnceLock<Regex> = OnceLock::new();
 static REGEX_SESSION_DISCONNECT: OnceLock<Regex> = OnceLock::new();
 
 pub struct CiscoAsaExtractor;
@@ -38,6 +39,15 @@ impl CiscoAsaExtractor {
         REGEX_DENIED_CONN.get_or_init(|| {
             Regex::new(r"(?:(Inbound|Outbound)\s+)?([A-Za-z0-9]+)\s+connection\s+denied\s+from\s+([^\s]+)\s+to\s+([^\s]+)(?:.*?interface\s+([^\s]+))?")
                 .expect("Invalid ASA drop regex")
+        });
+        REGEX_DROPPED_ACL.get_or_init(|| {
+            // %ASA-4-106007 dropped-by-access-list shape: "dropped <proto>
+            // from <ip>/<port> to <ip>/<port>, access-list ... denied ..." —
+            // no "... connection denied ..." phrase, so REGEX_DENIED_CONN
+            // misses it. Trailing comma excluded from the dst endpoint
+            // (`[^\s,]+`) or `u16` port parsing would fail.
+            Regex::new(r"(?i)dropped\s+([A-Za-z0-9]+)\s+from\s+([^\s,]+)\s+to\s+([^\s,]+)")
+                .expect("Invalid ASA dropped-by-access-list regex")
         });
         REGEX_SESSION_DISCONNECT.get_or_init(|| {
             Regex::new(r"Group\s*=\s*([^,]+),\s*Username\s*=\s*([^,]+),\s*IP\s*=\s*([^,\s]+),\s*Session disconnected\.\s*Session Type:\s*([^,]+),\s*Duration:\s*([^,]+),\s*Bytes xmt:\s*(\d+),\s*Bytes rcv:\s*(\d+),\s*Reason:\s*(.+?)\s*$")
@@ -219,6 +229,39 @@ impl CiscoAsaExtractor {
                     let dst_endpoint = Endpoint::new(dst_ip, dst_port, dst_intf, None);
                     let connection_info =
                         ConnectionInfo::new(proto_num, Some(proto_name), Some(direction));
+
+                    let product = Product::new("Cisco", "ASA", None);
+                    let metadata = Metadata::new(product, raw, "", "", now_ms);
+
+                    Ok(NetworkActivity::new(
+                        activity_id::OTHER,
+                        now_ms,
+                        disposition::DROPPED,
+                        src_endpoint,
+                        dst_endpoint,
+                        connection_info,
+                        None,
+                        metadata,
+                    )
+                    .with_unmapped(unmapped))
+                } else if let Some(caps) = REGEX_DROPPED_ACL.get().unwrap().captures(body) {
+                    // 106007 dropped shape — extract the five embedded
+                    // fields instead of falling through to default
+                    // endpoints. No direction word exists in this raw:
+                    // emit None (honest, never fabricated "Inbound").
+                    let proto_str = caps.get(1).map(|m| m.as_str()).unwrap_or("UDP");
+                    let src_str = caps.get(2).map(|m| m.as_str()).unwrap_or("");
+                    let dst_str = caps.get(3).map(|m| m.as_str()).unwrap_or("");
+
+                    let (src_ip, src_port, src_intf) = parse_endpoint_str(src_str, None);
+                    let (dst_ip, dst_port, dst_intf) = parse_endpoint_str(dst_str, None);
+
+                    let proto_name = proto_str.to_ascii_uppercase();
+                    let proto_num = protocol_num_from_name(&proto_name);
+
+                    let src_endpoint = Endpoint::new(src_ip, src_port, src_intf, None);
+                    let dst_endpoint = Endpoint::new(dst_ip, dst_port, dst_intf, None);
+                    let connection_info = ConnectionInfo::new(proto_num, Some(proto_name), None);
 
                     let product = Product::new("Cisco", "ASA", None);
                     let metadata = Metadata::new(product, raw, "", "", now_ms);

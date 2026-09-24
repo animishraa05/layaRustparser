@@ -198,6 +198,11 @@ def fgt_kv(rng: random.Random, type_: str = "traffic", action: str = "accept",
     sip, dip = ipv4(rng, True), ipv4(rng, False)
     sport, dport = rng.randint(1024, 65000), rng.choice([443, 53, 80, 8443, 8080])
     proto = rng.choice([("6", "tcp"), ("17", "udp")])
+    # GT must MIRROR the line's `proto=` num — the raw is authoritative.
+    # dns/utm/app-ctrl previously hardcoded proto_gt, contradicting their
+    # own random proto= about half the time (603 sidecar wrongs in the
+    # full-dataset run: engine right, sidecar wrong).
+    proto_gt = proto[1]
     logid = {"traffic": "0000000003", "dns": "0001000013",
              "utm": "0000000016", "app-ctrl": "0001000125"}[type_]
     tail = f'action="{action}" policyid={rng.randint(10, 99)} proto={proto[0]}'
@@ -207,14 +212,12 @@ def fgt_kv(rng: random.Random, type_: str = "traffic", action: str = "accept",
                      f'sessionid={rng.randint(1000000, 1999999)} {tail} '
                      f'sentbyte={rng.randint(64, 999999)} '
                      f'rcvdbyte={rng.randint(64, 999999)}')
-        proto_gt = proto[1]
     elif type_ == "dns":
         line_tail = (f'srcip={sip} srcport={sport} srcintf="trust" '
                      f'dstip={dip} dstport=53 dstintf="wan1" '
                      f'sessionid={rng.randint(1000000, 1999999)} {tail} '
                      f'qtype=A qname="svc{rng.randint(1, 99)}.example.net" '
                      f'msg="query refused"')
-        proto_gt = "udp"
     elif type_ == "utm":
         url = (f'https://cdn.example.net/asset/{rng.randint(1, 9999)}/main.css'
                if not long_url else
@@ -225,13 +228,11 @@ def fgt_kv(rng: random.Random, type_: str = "traffic", action: str = "accept",
                      f'sessionid={rng.randint(1000000, 1999999)} {tail} '
                      f'service="HTTP" cat="Malicious Networks" '
                      f'url="{url}"')
-        proto_gt = "tcp"
     else:  # app-ctrl
         line_tail = (f'srcip={sip} srcport={sport} srcintf="trust" '
                      f'dstip={dip} dstport={dport} dstintf="wan1" '
                      f'sessionid={rng.randint(1000000, 1999999)} {tail} '
                      f'app="TikTok" appcat="Low Risk"')
-        proto_gt = "tcp"
     raw = (f'<189>date=2026-09-21 time=14:0{rng.randint(0, 5)}:{rng.randint(10, 59)} '
            f'devname="{dev}" logid="{logid}" type="{type_}" '
            f'subtype="forward" level="notice" vd="root" {line_tail}')
@@ -846,6 +847,61 @@ def build_holdout(rng: random.Random) -> list[dict]:
 # I/O
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Full dataset (end-to-end run): clean "proper logs", one file per core
+# corpus name, so `evaluate --corpus core --data-dir data/raw/full` grades
+# all nine files with the sidecar. NOT committed (generated on demand,
+# gitignored); seed deliberately distinct from 1337/9090/42.
+# ---------------------------------------------------------------------------
+
+SEED_FULL = 777
+FULL_FILES = ("cisco_asa.log", "fortigate.log", "paloalto.log",
+              "suricata.json", "pfsense.log", "cisco_asa_vpn.log",
+              "fortigate_utm.log", "paloalto_threat.log", "pfsense_ipv6.log")
+
+
+def build_full(rng: random.Random, n: int) -> dict[str, list[dict]]:
+    """`n` clean records per file; each family rotates its line shapes
+    (mirrors the committed corpus mix, unmutated)."""
+    producers: dict[str, list] = {
+        "cisco_asa.log": [
+            lambda r: asa_build(r), lambda r: asa_build(r, udp=True),
+            asa_teardown, asa_denied, lambda r: asa_denied(r, "106007")],
+        "fortigate.log": [
+            lambda r: fgt_kv(r, "traffic", "accept"),
+            lambda r: fgt_kv(r, "traffic", "deny")],
+        "paloalto.log": [
+            lambda r: pan_row(r, "TRAFFIC", "start", "allow"),
+            lambda r: pan_row(r, "TRAFFIC", "end", "allow"),
+            lambda r: pan_row(r, "TRAFFIC", "drop", "drop")],
+        "suricata.json": [
+            lambda r: suricata(r, "alert"), lambda r: suricata(r, "flow"),
+            lambda r: suricata(r, "dns")],
+        "pfsense.log": [
+            lambda r: pfsense_v4(r, "pass"), lambda r: pfsense_v4(r, "block")],
+        "cisco_asa_vpn.log": [asa_vpn_ok, asa_vpn_fail, asa_aaa_ok,
+                              asa_aaa_fail],
+        "fortigate_utm.log": [
+            lambda r: fgt_kv(r, "dns", "blocked"),
+            lambda r: fgt_kv(r, "dns", "accept"),
+            lambda r: fgt_kv(r, "utm", "blocked"),
+            lambda r: fgt_kv(r, "utm", "accept"),
+            lambda r: fgt_kv(r, "app-ctrl", "blocked")],
+        "paloalto_threat.log": [
+            lambda r: pan_row(r, "THREAT", "end", "deny"),
+            lambda r: pan_row(r, "THREAT", "start", "allow"),
+            lambda r: pan_row(r, "THREAT", "end", "drop")],
+        "pfsense_ipv6.log": [
+            lambda r: pfsense_v6(r, "pass"), lambda r: pfsense_v6(r, "block")],
+    }
+    out: dict[str, list[dict]] = {}
+    for name in FULL_FILES:
+        prods = producers[name]
+        recs = [prods[i % len(prods)](rng) for i in range(n)]
+        out[name] = dedup_keep_order(recs)
+    return out
+
+
 def write_log(path: Path, raws: list[str]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("\n".join(raws) + "\n", encoding="utf-8")
@@ -864,6 +920,10 @@ def main() -> int:
     ap.add_argument("--holdout", action="store_true",
                     help="ALSO generate data/raw/holdout/ (seed 9090; the "
                          "holdout is frozen until the P8 final freeze)")
+    ap.add_argument("--full", type=int, metavar="N", default=0,
+                    help="also generate data/raw/full/ — N clean 'proper "
+                         "log' lines per core corpus file (seed 777, "
+                         "gitignored, graded via its gt.jsonl sidecar)")
     args = ap.parse_args()
 
     rng = random.Random(SEED_ADV)
@@ -897,6 +957,21 @@ def main() -> int:
         write_log(hdir / "holdout.log", [r["raw"] for r in hold])
         write_sidecar(hdir / "gt.jsonl", hold)
         print(f"holdout (FROZEN until P8): {len(hold)} records -> {hdir}")
+
+    if args.full > 0:
+        frng = random.Random(SEED_FULL)
+        full = build_full(frng, args.full)
+        fdir = REPO / "data" / "raw" / "full"
+        flat: list[dict] = []
+        total = 0
+        for name in FULL_FILES:
+            recs = full[name]
+            write_log(fdir / name, [r["raw"] for r in recs])
+            flat.extend(recs)
+            total += len(recs)
+        write_sidecar(fdir / "gt.jsonl", flat)
+        print(f"full: {total} records across {len(FULL_FILES)} files -> "
+              f"{fdir}")
 
     return 0
 

@@ -1264,6 +1264,10 @@ fn test_p7_robustness_null_vs_wrong_discipline() {
     assert_eq!(t.robustness.gt_fields_wrong, 0);
     assert_eq!(t.robustness.gt_fields_null, 0);
     assert_eq!(t.robustness.format_recognized, 1);
+    assert!(
+        t.robustness.gt_wrong_by_key.is_empty(),
+        "no wrongs -> empty by-key diagnostic"
+    );
 
     // A WRONG non-null (GT says 994, engine extracts 993) is strictly worse
     // than an honest null — it must land in `wrong`, never `null`.
@@ -1274,6 +1278,75 @@ fn test_p7_robustness_null_vs_wrong_discipline() {
     assert_eq!(t2.robustness.gt_fields_wrong, 1);
     assert_eq!(t2.robustness.gt_fields_correct, 4);
     assert_eq!(t2.robustness.gt_fields_null, 0);
+    assert_eq!(
+        t2.robustness.gt_wrong_by_key.get("src_port"),
+        Some(&1),
+        "by-key diagnostic records exactly which field contradicted"
+    );
+    assert!(
+        !t2.robustness.gt_wrong_by_key.contains_key("dst_ip"),
+        "only the contradicting key is recorded"
+    );
+}
+
+/// Full-dataset protocol parity (generated on demand via
+/// `gen_adversarial.py --full N`; skipped when absent so the suite stays
+/// hermetic). Grades sidecar `gt_fields.protocol` against the engine's
+/// `protocol_name` line-by-line — this is what localizes the aggregate
+/// `gt_wrong_by_key` count to specific families.
+#[test]
+fn test_full_dataset_protocol_parity_when_generated() {
+    use ulpf_core::parser::UniversalParser;
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data/raw/full");
+    let gt_path = dir.join("gt.jsonl");
+    if !gt_path.exists() {
+        return; // generated on demand — nothing to grade
+    }
+    let text = std::fs::read_to_string(&gt_path).expect("read full sidecar");
+    let parser = UniversalParser::new();
+    let mut mismatches: Vec<String> = Vec::new();
+    let mut graded = 0usize;
+    for line in text.lines().filter(|l| !l.trim().is_empty()) {
+        let rec: serde_json::Value = serde_json::from_str(line).expect("jsonl");
+        let exp = rec["gt_fields"]
+            .get("protocol")
+            .cloned()
+            .unwrap_or(serde_json::Value::Null);
+        if exp.is_null() {
+            continue;
+        }
+        graded += 1;
+        let raw = rec["raw"].as_str().expect("raw string");
+        let act = parser.parse(raw).expect("parse full-dataset line");
+        let obs = act
+            .connection_info
+            .protocol_name
+            .clone()
+            .map(serde_json::Value::String)
+            .unwrap_or(serde_json::Value::Null);
+        let ok = match (&exp, &obs) {
+            (serde_json::Value::String(a), serde_json::Value::String(b)) => {
+                a.eq_ignore_ascii_case(b)
+            }
+            _ => exp == obs,
+        };
+        if !ok {
+            mismatches.push(format!(
+                "origin={} exp={} obs={} raw={}",
+                rec.get("origin").and_then(|v| v.as_str()).unwrap_or("?"),
+                exp,
+                obs,
+                raw
+            ));
+        }
+    }
+    assert!(
+        mismatches.is_empty(),
+        "{}/{} protocol mismatches; first up to 5:\n{}",
+        mismatches.len(),
+        graded,
+        mismatches[..mismatches.len().min(5)].join("\n")
+    );
 }
 
 /// P7.3/P8: the novel-vendor holdout is FROZEN — never executed until the

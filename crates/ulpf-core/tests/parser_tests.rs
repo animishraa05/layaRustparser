@@ -584,6 +584,41 @@ fn test_p7_asa_vpn_aaa_verdict_phrases() {
     );
 }
 
+/// Full-dataset run finding: `%ASA-4-106007: dropped <proto> from
+/// <ip>/<port> to <ip>/<port>, access-list ... denied ...` misses
+/// `REGEX_DENIED_CONN` (which needs the literal `... connection denied
+/// from ...` phrasing) and fell through to `fallback_parse`, emitting
+/// default endpoints/protocol for a line that embeds all five fields —
+/// the entire 1,440-record audit dump of the 10,799-line run. Pins
+/// endpoints, ports, protocol, DROPPED, byte-exact provenance, and the
+/// sibling 106001 shape (must keep flowing through `REGEX_DENIED_CONN`).
+#[test]
+fn test_asa_106007_dropped_by_access_list_endpoints() {
+    let parser = UniversalParser::new();
+    let raw = "<164>Sep 21 14:02:16 asa-edge-01 %ASA-4-106007: dropped UDP from 192.0.2.38/36846 to 10.37.135.20/22, access-list outside_in denied icmp 10.37.135.20 -> 192.0.2.38";
+    let ev = parser
+        .parse(raw)
+        .expect("parse ASA 106007 dropped-by-access-list line");
+    assert_eq!(ev.src_endpoint.ip.as_deref(), Some("192.0.2.38"));
+    assert_eq!(ev.src_endpoint.port, Some(36846));
+    assert_eq!(ev.dst_endpoint.ip.as_deref(), Some("10.37.135.20"));
+    assert_eq!(ev.dst_endpoint.port, Some(22));
+    assert_eq!(ev.connection_info.protocol_name.as_deref(), Some("UDP"));
+    assert_eq!(ev.disposition, disposition::DROPPED);
+    assert_eq!(
+        ev.metadata.raw_hash,
+        hex::encode(Sha256::digest(raw.as_bytes()))
+    );
+
+    let denied = "<162>Sep 21 14:02:40 asa-dc-01 %ASA-2-106001: Inbound TCP connection denied from 198.51.100.5/5555 to 10.0.0.2/80 flags ACK on interface outside";
+    let ev = parser.parse(denied).expect("parse ASA 106001");
+    assert_eq!(ev.src_endpoint.ip.as_deref(), Some("198.51.100.5"));
+    assert_eq!(ev.src_endpoint.port, Some(5555));
+    assert_eq!(ev.dst_endpoint.ip.as_deref(), Some("10.0.0.2"));
+    assert_eq!(ev.connection_info.protocol_name.as_deref(), Some("TCP"));
+    assert_eq!(ev.disposition, disposition::DROPPED);
+}
+
 /// P7.2: PAN-OS THREAT rows parse through the same positional layout as
 /// TRAFFIC rows (type token at CSV index 3 anchors `base = 0`; action stays
 /// at index 30). Pins endpoints, ports, protocol, deny -> Blocked, and the

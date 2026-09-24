@@ -214,6 +214,11 @@ pub struct RobustnessSummary {
     pub gt_fields_wrong: usize,
     /// Sidecar entries that honestly expected nothing.
     pub gt_fields_null: usize,
+    /// Diagnostic: mismatches by field key (`src_ip 603, protocol 240, ...`)
+    /// — tells you WHERE `gt_fields_wrong` concentrates. Not a gate metric;
+    /// `#[serde(default)]` keeps pre-P9 report deserialization working.
+    #[serde(default)]
+    pub gt_wrong_by_key: std::collections::BTreeMap<String, usize>,
 }
 
 /// Load a `gt.jsonl` sidecar into raw-keyed overrides.
@@ -643,6 +648,24 @@ impl EvaluationReport {
                 "| **GT fields wrong** | {} | {} | Contradicted expectation (strictly worse than null) |\n",
                 b.robustness.gt_fields_wrong, t.robustness.gt_fields_wrong
             ));
+            if !b.robustness.gt_wrong_by_key.is_empty() || !t.robustness.gt_wrong_by_key.is_empty()
+            {
+                let fmt = |m: &std::collections::BTreeMap<String, usize>| {
+                    if m.is_empty() {
+                        "—".to_string()
+                    } else {
+                        m.iter()
+                            .map(|(k, v)| format!("{k} {v}"))
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    }
+                };
+                md.push_str(&format!(
+                    "| **GT fields wrong by key** | {} | {} | Diagnostic: where mismatches concentrate (not a gate metric) |\n",
+                    fmt(&b.robustness.gt_wrong_by_key),
+                    fmt(&t.robustness.gt_wrong_by_key
+                )));
+            }
             md.push_str(&format!(
                 "| **GT fields null (honest)** | {} | {} | No expectation — excluded from wrong |\n\n",
                 b.robustness.gt_fields_null, t.robustness.gt_fields_null
@@ -1996,6 +2019,7 @@ impl EvaluatorEngine {
                 rob.gt_fields_correct += 1;
             } else {
                 rob.gt_fields_wrong += 1;
+                *rob.gt_wrong_by_key.entry(key.to_string()).or_insert(0) += 1;
             }
         }
     }
