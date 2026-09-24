@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::hash::Hasher;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -806,10 +807,15 @@ impl EvaluatorEngine {
             },
             |raw| {
                 // Naive exact-match baseline (FAIR): cluster identity = canonical
-                // post-mask skeleton hash. No ground-truth involvement — the GT-hash
-                // variant lives only inside audit_accuracy as the labeled oracle ceiling.
+                // post-mask skeleton hashed over its FULL content. Deliberately not
+                // compute_signature_hash — that is a structural signature (vendor +
+                // selected tokens) for LRU format routing, which would merge lines
+                // by design and hand the baseline a false impurity. The GT-hash
+                // variant lives only inside audit_accuracy as the oracle ceiling.
                 let masked = crate::drain::mask_line(raw);
-                let cluster_id = SignatureLruCache::compute_signature_hash(&masked) as usize;
+                let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                std::hash::Hash::hash(&masked, &mut hasher);
+                let cluster_id = hasher.finish() as usize;
                 (cluster_id, masked)
             },
             &corpus,
@@ -1052,10 +1058,20 @@ impl EvaluatorEngine {
             let action = Self::panos_action_field(raw);
             ("Palo Alto".to_string(), "panos_traffic".to_string(), action)
         } else if raw.starts_with('{') || raw.contains("\"event_type\"") {
-            let action = if raw.contains("\"alert\"") {
-                Some("Blocked".to_string())
-            } else {
-                Some("Allowed".to_string())
+            // Suricata EVE: an explicit `action` inside the event is authoritative
+            // (alert with "action": "allowed" means the traffic WAS allowed);
+            // without one, alert = Blocked (detection), dns/flow = Allowed.
+            let action = match Self::eve_action_value(raw) {
+                Some("blocked") | Some("reject") => Some("Blocked".to_string()),
+                Some("drop") | Some("dropped") => Some("Dropped".to_string()),
+                Some("allowed") | Some("pass") => Some("Allowed".to_string()),
+                _ => {
+                    if raw.contains("\"alert\"") {
+                        Some("Blocked".to_string())
+                    } else {
+                        Some("Allowed".to_string())
+                    }
+                }
             };
             let sub = if raw.contains("\"alert\"") {
                 "suricata_alert"
@@ -1101,6 +1117,16 @@ impl EvaluatorEngine {
             }
         }
         None
+    }
+
+    /// Extract the explicit Suricata EVE `action` value, if present
+    /// (e.g. `"action": "blocked"` inside the `alert`/`flow` object).
+    fn eve_action_value(raw: &str) -> Option<&str> {
+        let p = raw.find("\"action\"")?;
+        let after = &raw[p + "\"action\"".len()..];
+        let q1 = after.find('"')?;
+        let q2 = after[q1 + 1..].find('"')?;
+        Some(&after[q1 + 1..q1 + 1 + q2])
     }
 
     /// Resolve ground-truth disposition for PAN-OS from the positional action column
@@ -1164,14 +1190,16 @@ impl EvaluatorEngine {
             return false;
         }
         let masked_tokens = DrainMiner::tokenize(&crate::drain::mask_line(raw));
-        let tmpl_tokens: Vec<&str> = template.split_whitespace().collect();
+        // Tokenize the template with the *same* function (trims quote/comma edges),
+        // otherwise a template equal to the masked line fails on untrimmed edges.
+        let tmpl_tokens = DrainMiner::tokenize(template);
         if tmpl_tokens.len() != masked_tokens.len() {
             return false;
         }
         let aligned = tmpl_tokens
             .iter()
             .zip(masked_tokens.iter())
-            .all(|(t, m)| *t == "<*>" || *t == m.as_str());
+            .all(|(t, m)| t.as_str() == "<*>" || t == m);
         if !aligned {
             return false;
         }

@@ -416,6 +416,29 @@ fn test_audit_vendor_label_map() {
     assert_eq!(EvaluatorEngine::map_audit_vendor("unknown"), "unknown");
 }
 
+/// Suricata EVE ground truth: an explicit event-level `action` is authoritative;
+/// without one, alert = Blocked (detection), dns/flow = Allowed.
+#[test]
+fn test_gt_suricata_eve_action() {
+    let alert_allowed = r#"{"timestamp": "2026-09-21T14:00:06.4554+0000", "event_type": "alert", "src_ip": "10.0.0.8", "alert": {"action": "allowed", "signature": "ET SCAN", "severity": 3}}"#;
+    let (_, tag, act) = EvaluatorEngine::extract_ground_truth(alert_allowed);
+    assert_eq!(tag, "suricata_alert");
+    assert_eq!(act.as_deref(), Some("Allowed"), "explicit allowed must win");
+
+    let alert_blocked = r#"{"timestamp": "2026-09-21T14:00:06.4554+0000", "event_type": "alert", "src_ip": "10.0.0.8", "alert": {"action": "blocked", "signature": "ET SCAN", "severity": 2}}"#;
+    let (_, _, act) = EvaluatorEngine::extract_ground_truth(alert_blocked);
+    assert_eq!(act.as_deref(), Some("Blocked"));
+
+    let alert_no_action = r#"{"timestamp": "2026-09-21T14:00:06.4554+0000", "event_type": "alert", "src_ip": "10.0.0.8", "alert": {"signature": "ET SCAN", "severity": 2}}"#;
+    let (_, _, act) = EvaluatorEngine::extract_ground_truth(alert_no_action);
+    assert_eq!(act.as_deref(), Some("Blocked"));
+
+    let dns = r#"{"timestamp": "2026-09-21T14:00:05.1653+0000", "event_type": "dns", "src_ip": "10.0.0.83", "dns": {"type": "query"}}"#;
+    let (_, tag, act) = EvaluatorEngine::extract_ground_truth(dns);
+    assert_eq!(tag, "suricata_flow");
+    assert_eq!(act.as_deref(), Some("Allowed"));
+}
+
 /// Numeric IANA protocol equivalence: `proto=17` in raw validates an extracted UDP.
 #[test]
 fn test_protocol_numeric_equivalence_audit() {

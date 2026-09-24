@@ -8,3 +8,4 @@
 *.log
 !sample_new_firewall.log
 !data/raw/*
+audit_dump.jsonl
