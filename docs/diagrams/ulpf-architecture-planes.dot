@@ -1,21 +1,22 @@
-// ULPF four-plane architecture — source for docs/ARCHITECTURE.md.
+// ULPF four-plane architecture - source for docs/ARCHITECTURE.md.
 // Regenerate: dot -Tsvg docs/diagrams/ulpf-architecture-planes.dot -o docs/diagrams/ulpf-architecture-planes.svg
+// Rule: ASCII-only label text (no unicode symbols - some renderers show tofu).
 digraph planes {
   graph [rankdir=TB, bgcolor="white", pad="0.2", nodesep="0.5", ranksep="0.55", fontname="Helvetica"];
-  node [shape="box", style="filled,rounded", fillcolor="#f6f8fa", color="#57606a", fontname="Helvetica", fontsize="11", margin="0.18,0.10"];
-  edge [color="#57606a", fontname="Helvetica", fontsize="10", arrowsize="0.7"];
+  node [shape="box", style="filled,rounded", fillcolor="#f6f8fa", color="#57606a", fontname="Helvetica", fontsize="13", margin="0.20,0.11"];
+  edge [color="#57606a", fontname="Helvetica", fontsize="11", arrowsize="0.7"];
 
-  src [label="[Perimeter Network Devices]\nSyslog UDP/TCP — Cisco · Fortinet · Palo Alto · Suricata", fillcolor="#ddf4ff", color="#0969da"];
+  src [label="[Perimeter Network Devices]\nSyslog UDP/TCP: Cisco, Fortinet, Palo Alto, Suricata", fillcolor="#ddf4ff", color="#0969da"];
 
-  p1 [label="1 · HIGH-SPEED ASYNC INGESTION PLANE   (crates/ulpf-core)\n• Asynchronous multi-threaded socket pool (Tokio + SO_REUSEPORT)\n• Time-ordered UUIDv7 event ID & nanosecond ingestion timestamp\n• 100% lossless raw-log retention buffer", fillcolor="#ddf4ff", color="#0969da"];
+  p1 [label="1: HIGH-SPEED ASYNC INGESTION PLANE (crates/ulpf-core)\n- Asynchronous multi-threaded socket pool (Tokio + SO_REUSEPORT)\n- Time-ordered UUIDv7 event ID and nanosecond ingestion timestamp\n- 100% lossless raw-log retention buffer", fillcolor="#ddf4ff", color="#0969da"];
 
-  p2 [label="2 · TWO-TIER ZERO-COPY PARSING & NORMALIZATION   (crates/ulpf-core)\n• Tier 1: Aho-Corasick multi-pattern classifier — O(m) vendor signature detection\n• Tier 2: zero-copy token extractors — zero heap string allocations\n• Standard OCSF 1.3 mapping: class UID 4001 (NetworkActivity)"];
+  p2 [label="2: TWO-TIER ZERO-COPY PARSING & NORMALIZATION (crates/ulpf-core)\n- Tier 1: Aho-Corasick multi-pattern classifier, O(m) vendor signature detection\n- Tier 2: zero-copy token extractors, zero heap string allocations\n- Standard OCSF 1.3 mapping: class UID 4001 (NetworkActivity)"];
 
-  p3 [label="3 · INTEGRITY & STORAGE PLANE   (crates/ulpf-integrity)\n• RFC 6962 Merkle tree — leaf: SHA256(0x00 ‖ raw_log) · node: SHA256(0x01 ‖ left ‖ right)\n• Dual-trigger batching (1,000 logs / 2,000 ms)\n• O(log N) inclusion proof generation\n• Columnar Apache Parquet WORM storage\n• Forensic bit-flip tamper detector", fillcolor="#dafbe1", color="#1a7f37"];
+  p3 [label="3: INTEGRITY & STORAGE PLANE (crates/ulpf-integrity)\n- RFC 6962 Merkle tree: leaf SHA256(0x00 || raw_log), node SHA256(0x01 || left || right)\n- Dual-trigger batching (1,000 logs / 2,000 ms)\n- O(log N) inclusion proof generation\n- Columnar Apache Parquet WORM storage\n- Forensic bit-flip tamper detector", fillcolor="#dafbe1", color="#1a7f37"];
 
-  p4 [label="4 · AIR-GAPPED AI & ANOMALY PLANE   (crates/ulpf-ai)\n• Native Rust Drain template miner — microsecond structural clustering\n• Real-time evasion / anomaly alerting\n• Air-gapped one-click onboarder — heuristic / local synthesizer\n• Auto-validated non-greedy regex · hot dynamic parser loading", fillcolor="#fff8c5", color="#9a6700"];
+  p4 [label="4: AIR-GAPPED AI & ANOMALY PLANE (crates/ulpf-ai)\n- Native Rust Drain template miner, microsecond structural clustering\n- Real-time evasion / anomaly alerting\n- Air-gapped one-click onboarder: heuristic / local synthesizer\n- Auto-validated non-greedy regex, hot dynamic parser loading", fillcolor="#fff8c5", color="#9a6700"];
 
   src -> p1 -> p2;
-  p2 -> p3 [label=" normalized events"];
-  p2 -> p4 [label=" unmapped / drift"];
+  p2 -> p3 [label="normalized events"];
+  p2 -> p4 [label="unmapped / drift"];
 }

@@ -1,17 +1,18 @@
-// RFC 6962 Merkle tree with a tampered leaf — source for docs/SIMPLIFIED_EXPLANATION_AND_BENCHMARKS.md §4.
+// RFC 6962 Merkle tree with a tampered leaf - source for docs/SIMPLIFIED_EXPLANATION_AND_BENCHMARKS.md section 4.
 // Regenerate: dot -Tsvg docs/diagrams/merkle-tree.dot -o docs/diagrams/merkle-tree.svg
+// Rule: ASCII-only label text (no unicode symbols - some renderers show tofu).
 digraph merkle_tree {
   graph [rankdir=TB, bgcolor="white", pad="0.2", nodesep="0.4", ranksep="0.5", fontname="Helvetica"];
-  node [shape="box", style="filled,rounded", fillcolor="#f6f8fa", color="#57606a", fontname="Helvetica", fontsize="11", margin="0.16,0.09"];
-  edge [color="#57606a", fontname="Helvetica", fontsize="10", arrowsize="0.7"];
+  node [shape="box", style="filled,rounded", fillcolor="#f6f8fa", color="#57606a", fontname="Helvetica", fontsize="13", margin="0.18,0.10"];
+  edge [color="#57606a", fontname="Helvetica", fontsize="11", arrowsize="0.7"];
 
-  root [label="Merkle root (anchored in ledger)\n7820a61cf032…", fillcolor="#fff8c5", color="#9a6700"];
-  h12  [label="Internal node 1-2\nSHA256(node1 ‖ node2)"];
-  h34  [label="Internal node 3-4\nSHA256(node3 ‖ node4)"];
-  l1   [label="Leaf #0: Cisco log\nSHA256(0x00 ‖ log_0)   ⚠ tampered", fillcolor="#ffebe9", color="#cf222e", penwidth=2];
-  l2   [label="Leaf #1: Fortinet log\nSHA256(0x00 ‖ log_1)"];
-  l3   [label="Leaf #2: Palo Alto log\nSHA256(0x00 ‖ log_2)"];
-  l4   [label="Leaf #3: Suricata log\nSHA256(0x00 ‖ log_3)"];
+  root [label="Merkle root (anchored in ledger)\n7820a61cf032...", fillcolor="#fff8c5", color="#9a6700"];
+  h12  [label="Internal node 1-2\nSHA256(node1 || node2)"];
+  h34  [label="Internal node 3-4\nSHA256(node3 || node4)"];
+  l1   [label="Leaf #0: Cisco log (TAMPERED)\nSHA256(0x00 || log_0)", fillcolor="#ffebe9", color="#cf222e", penwidth=2];
+  l2   [label="Leaf #1: Fortinet log\nSHA256(0x00 || log_1)"];
+  l3   [label="Leaf #2: Palo Alto log\nSHA256(0x00 || log_2)"];
+  l4   [label="Leaf #3: Suricata log\nSHA256(0x00 || log_3)"];
 
   root -> h12;
   root -> h34;
