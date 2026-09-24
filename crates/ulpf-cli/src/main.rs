@@ -140,8 +140,9 @@ struct OnboardArgs {
 
 #[derive(Args, Debug)]
 struct BenchmarkArgs {
-    /// Path to raw dataset directory
-    #[arg(short, long, default_value = "data/raw")]
+    /// Path to raw dataset directory (long-only: `-d` belongs to `--duration`;
+    /// the duplicate short flag panic'd every debug build — P10.0)
+    #[arg(long, default_value = "data/raw")]
     data_dir: PathBuf,
 
     /// Duration of benchmark in seconds
@@ -179,8 +180,9 @@ impl CorpusKind {
 
 #[derive(Args, Debug)]
 struct EvaluateArgs {
-    /// Path to raw dataset directory
-    #[arg(short, long, default_value = "data/raw")]
+    /// Path to raw dataset directory (long-only: `-d` belongs to `--duration`
+    /// — the duplicate short flag made debug builds panic on parse, P10.0)
+    #[arg(long, default_value = "data/raw")]
     data_dir: PathBuf,
 
     /// Target architecture engine: 'all' (compare both), 'baseline' (UniversalParser only), 'tiered' (LRU+DrainDotNet+Laya only)
@@ -394,36 +396,120 @@ async fn run_ingest(args: IngestArgs) -> Result<()> {
         "\x1b[1;32m[+] Engine active. Listening for Syslog UDP/TCP traffic on port 5140...\x1b[0m"
     );
 
-    while let Some(raw_log) = raw_rx.recv().await {
-        let event = parser.parse_lossless(&raw_log);
-        total_parsed.fetch_add(1, Ordering::Relaxed);
+    // P10.0 graceful shutdown: SIGINT/SIGTERM drains the channel and flushes
+    // the tail batch instead of forfeiting every event below the dual-trigger
+    // thresholds (a `pkill`ed ingest measurably lost a 187-event partial
+    // batch in the P9-scale run). `notify_one` stores a permit, so a signal
+    // arriving before this task is awaited is never lost.
+    let shutdown = Arc::new(tokio::sync::Notify::new());
+    let shutdown_signal = shutdown.clone();
+    tokio::spawn(async move {
+        #[cfg(unix)]
+        {
+            use tokio::signal::unix::{signal, SignalKind};
+            let mut term = match signal(SignalKind::terminate()) {
+                Ok(s) => s,
+                Err(e) => {
+                    warn!("SIGTERM handler unavailable: {}", e);
+                    return;
+                }
+            };
+            tokio::select! {
+                _ = tokio::signal::ctrl_c() => {}
+                _ = term.recv() => {}
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = tokio::signal::ctrl_c().await;
+        }
+        shutdown_signal.notify_one();
+    });
 
-        // Run through Drain3 structural clustering for anomaly detection
-        let cluster_res = miner.add_log(&raw_log);
-        if let Some(alert) = cluster_res.anomaly {
-            total_anomalies.fetch_add(1, Ordering::Relaxed);
-            if alert.severity == AlertSeverity::High || alert.severity == AlertSeverity::Critical {
-                warn!("\x1b[1;31m[SECURITY ALERT]\x1b[0m {:?}", alert.message);
+    {
+        // Scoped so the closure's mutable borrows of the pipeline end before
+        // the final flush below.
+        let mut process = |raw_log: String| -> Result<()> {
+            let event = parser.parse_lossless(&raw_log);
+            total_parsed.fetch_add(1, Ordering::Relaxed);
+
+            // Run through Drain3 structural clustering for anomaly detection
+            let cluster_res = miner.add_log(&raw_log);
+            if let Some(alert) = cluster_res.anomaly {
+                total_anomalies.fetch_add(1, Ordering::Relaxed);
+                if alert.severity == AlertSeverity::High
+                    || alert.severity == AlertSeverity::Critical
+                {
+                    warn!("\x1b[1;31m[SECURITY ALERT]\x1b[0m {:?}", alert.message);
+                }
+            }
+
+            let ocsf_json = serde_json::to_string(&event).unwrap_or_else(|_| "{}".to_string());
+            let incoming = IncomingLog::new(&event.metadata.product.vendor_name, raw_log)
+                .with_timestamp(event.time)
+                .with_event_id(event.metadata.event_id)
+                .with_ocsf(ocsf_json);
+
+            if let Some(flush_res) = batcher.push(incoming)? {
+                total_blocks.fetch_add(1, Ordering::Relaxed);
+                info!(
+                    "\x1b[1;35m[MERKLE FLUSH]\x1b[0m Block #{} | Leaves: {} | Root: {}... | Saved: {}",
+                    flush_res.block_id,
+                    flush_res.leaf_count,
+                    &flush_res.merkle_root.to_hex()[..16],
+                    flush_res.parquet_path.display()
+                );
+            }
+            Ok(())
+        };
+
+        loop {
+            tokio::select! {
+                maybe = raw_rx.recv() => {
+                    match maybe {
+                        Some(raw_log) => process(raw_log)?,
+                        None => break, // every sender dropped
+                    }
+                }
+                _ = shutdown.notified() => {
+                    info!("[ULPF] Shutdown signal: draining channel, flushing tail batch...");
+                    break;
+                }
             }
         }
 
-        let ocsf_json = serde_json::to_string(&event).unwrap_or_else(|_| "{}".to_string());
-        let incoming = IncomingLog::new(&event.metadata.product.vendor_name, raw_log)
-            .with_timestamp(event.time)
-            .with_event_id(event.metadata.event_id)
-            .with_ocsf(ocsf_json);
-
-        if let Some(flush_res) = batcher.push(incoming)? {
-            total_blocks.fetch_add(1, Ordering::Relaxed);
-            info!(
-                "\x1b[1;35m[MERKLE FLUSH]\x1b[0m Block #{} | Leaves: {} | Root: {}... | Saved: {}",
-                flush_res.block_id,
-                flush_res.leaf_count,
-                &flush_res.merkle_root.to_hex()[..16],
-                flush_res.parquet_path.display()
-            );
+        // Grace drain: packets in flight when the signal landed get up to
+        // ~500 ms to reach the channel before the final flush.
+        let grace_end = Instant::now() + Duration::from_millis(500);
+        loop {
+            match raw_rx.try_recv() {
+                Ok(raw_log) => process(raw_log)?,
+                Err(mpsc::error::TryRecvError::Empty) if Instant::now() < grace_end => {
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+                Err(_) => break,
+            }
         }
     }
+
+    // Final flush: persist the partial batch the dual triggers never reached.
+    if let Some(flush_res) = batcher.flush()? {
+        total_blocks.fetch_add(1, Ordering::Relaxed);
+        info!(
+            "\x1b[1;35m[MERKLE FLUSH - SHUTDOWN]\x1b[0m Block #{} | Leaves: {} | Root: {}... | Saved: {}",
+            flush_res.block_id,
+            flush_res.leaf_count,
+            &flush_res.merkle_root.to_hex()[..16],
+            flush_res.parquet_path.display()
+        );
+    }
+    println!(
+        "\n\x1b[1;32m[ULPF SHUTDOWN]\x1b[0m Ingest: {} | Parsed: {} | Blocks: {} | Anomalies: {} \u{2014} tail batch flushed losslessly.",
+        total_ingested.load(Ordering::Relaxed),
+        total_parsed.load(Ordering::Relaxed),
+        total_blocks.load(Ordering::Relaxed),
+        total_anomalies.load(Ordering::Relaxed),
+    );
 
     Ok(())
 }
@@ -470,7 +556,9 @@ fn run_verify(args: VerifyArgs) -> Result<()> {
         Err(e) => {
             println!("\n\x1b[1;41;37m   [ALARM] FORENSIC TAMPERING DETECTED! INTEGRITY COMPROMISED!   \x1b[0m");
             println!("\x1b[1;31m✘ Parquet storage archive corrupted or modified by adversary: {}\x1b[0m\n", e);
-            return Ok(());
+            // P10.0: a detected integrity failure MUST be script-visible.
+            // Exit codes: 0 = valid, 1 = usage/missing input, 2 = tamper/failure.
+            std::process::exit(2);
         }
     };
 
@@ -514,6 +602,9 @@ fn run_verify(args: VerifyArgs) -> Result<()> {
         }
 
         println!("\n  \x1b[1;33m[Forensic Verdict]\x1b[0m Parquet block integrity is broken. The tamper-evident proof prevents fabricated evidence from being accepted.\x1b[0m");
+        // P10.0: broken integrity exits 2 so `if ulpf verify; then ...` can
+        // never accept tampered evidence (was: fell through to exit 0).
+        std::process::exit(2);
     }
 
     Ok(())
@@ -824,20 +915,26 @@ async fn run_evaluate(args: EvaluateArgs) -> Result<()> {
 
     match args.corpus {
         CorpusKind::Core => {
-            // Fixed core file set incl. the P7 format-expansion files
-            // (ASA VPN/AAA, FGT dns/utm/app-ctrl, PAN THREAT, pfSense IPv6).
-            for file_name in [
-                "cisco_asa.log",
-                "fortigate.log",
-                "paloalto.log",
-                "suricata.json",
-                "pfsense.log",
-                "cisco_asa_vpn.log",
-                "fortigate_utm.log",
-                "paloalto_threat.log",
-                "pfsense_ipv6.log",
-            ] {
-                push_file(&mut corpus, args.data_dir.join(file_name))?;
+            // P10.0 glob loader: `*.log` / `*.json` files in the data dir,
+            // sorted for determinism. Subdirectories (adversarial/, holdout/,
+            // full/), CSVs and the `gt.jsonl` sidecar (extension `jsonl`) are
+            // excluded — a new vendor/format file is evaluated with ZERO code
+            // changes (was: a hardcoded nine-filename list).
+            let mut paths: Vec<PathBuf> = fs::read_dir(&args.data_dir)
+                .with_context(|| format!("reading corpus dir {}", args.data_dir.display()))?
+                .filter_map(|entry| entry.ok())
+                .map(|entry| entry.path())
+                .filter(|p| p.is_file())
+                .filter(|p| {
+                    matches!(
+                        p.extension().and_then(|ext| ext.to_str()),
+                        Some("log") | Some("json")
+                    )
+                })
+                .collect();
+            paths.sort();
+            for path in paths {
+                push_file(&mut corpus, path)?;
             }
             // Optional sidecar: if the data dir ships a `gt.jsonl` (the
             // full-dataset run generates one), grade against it with the
