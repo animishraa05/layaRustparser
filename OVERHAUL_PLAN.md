@@ -469,3 +469,37 @@ after a P6 step; p50 ≥ 5.0 µs after any step.
   + 113019 37 honest nulls → **P5**), dst_ip 37 + protocol 37 (113019 → P5),
   vendor/disposition/src_ip families **eliminated**; tiered-only template 108
   + grouping 40 → **P6.1**.
+
+### P5 — strict evaluator rules: null-correct audit + §5 labels
+- **Pre-registered null-correct rule implemented** at all four audit `None`
+  sites (src/dst ip, ports, protocol): a null field is audited CORRECT only
+  when `raw` carries no valid marker for it; a marker with a null field stays
+  a failure — the rule generalizes "ICMP None audited as correct" without ever
+  laundering evidence. Marker detectors are format-blind: endpoint role keys
+  or two distinct IPv4s; port keys with a real 1–65535 value + the ASA
+  `interface:IP/PORT` shape + bracketed `]:PORT` (`sport=0`, bare CIDRs, and
+  digit soup are explicitly NOT port evidence); `proto=`-style keys with a
+  value + whole-word IANA IP-protocol names (`SSL`, `greater` are not
+  protocol evidence — pinned by tests).
+- **pfSense port bug found BY the rule (dump-driven):** post-rule `dst_port`
+  still failed 86/engine with `observed=0` — the pfSense IPv4 branch parsed
+  `fields[20]/[21]` unconditionally, so ICMP type-name/code were read as
+  ports (`Some(0)`; a numeric ICMP type would fabricate a src_port). P2's
+  "never Some(0)" normalization had missed pfSense. Fixed: transport-only
+  port parsing (TCP/UDP) + `filter(|p| *p != 0)` in both IPv4/IPv6 layouts,
+  with a regression test (string ICMP type, numeric ICMP type, TCP positive).
+- **§5 success-criteria labels:** invented `> 95%`/`> 90%`/`> 85%` report
+  thresholds replaced with the falsifiable bar (`≥ / > Naive Baseline (§5.2)`,
+  `Strictly Fewer vs Naive Baseline (§5.2)`); field rows state the
+  marker-absent-null rule (P5). Oracle-ceiling + unique-template rows already
+  present from P1.
+- **Tests 83 → 84** (+2 marker-rule tests, +pfSense ICMP regression). Gate:
+  clippy 0 / fmt ok / workspace green (flaky sub-µs benchmark re-ran alone per
+  AGENTS.md).
+- **Post-P5 eval:** VCA 100.00/100.00 · GA 100.00/96.92 · TA 100.00/91.69 ·
+  disposition 100.00/100.00 · p50 76.91/3.73 µs (<5.0 ✓) · Action
+  Inviolability 100% · lossless 100% · Tier-3 dispatches 96 · Tier-2 clusters
+  11 · **dump 904 → 148: every field-audit family (src/dst ip, ports,
+  protocol) = 0 on both engines** — only tiered `template` 108 + `grouping`
+  40 remain, i.e. exactly the ASA message-code cross-merges → **P6.1** (the
+  last red bar: GA/TA to 100 vs naive baseline's 100).
