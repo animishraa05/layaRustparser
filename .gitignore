@@ -21,3 +21,6 @@ data/raw/full/
 
 # Python bytecode caches (py_compile checks)
 __pycache__/
+
+# `ulpf scorecard` demo output (one command regenerates it; eval_*.md stay committed)
+/scorecard_report.md

@@ -21,6 +21,8 @@ use ulpf_integrity::batcher::{BatchAccumulator, BatcherConfig, IncomingLog};
 use ulpf_integrity::storage::ParquetCompression;
 use ulpf_integrity::tamper::verify_block_with_ledger;
 
+mod scorecard;
+
 #[derive(Parser, Debug)]
 #[command(
     name = "ulpf",
@@ -45,6 +47,8 @@ enum Commands {
     Benchmark(BenchmarkArgs),
     /// Architectural Evaluator: benchmark Baseline vs 3-Tier (LRU+DrainDotNet+Laya) with latency percentiles and cache efficiency
     Evaluate(EvaluateArgs),
+    /// One-command scorecard: baseline vs 3-tier side by side (throughput, latency deltas, accuracy audit, gates) as an aligned ASCII box + markdown report
+    Scorecard(ScorecardArgs),
     /// Inspect forensic records inside an archived Parquet block
     Inspect(InspectArgs),
     /// Adversarial simulation: stealthily tamper with an archived Parquet record
@@ -219,6 +223,33 @@ struct EvaluateArgs {
     audit_dump: Option<PathBuf>,
 }
 
+#[derive(Args, Debug)]
+struct ScorecardArgs {
+    /// Path to raw dataset directory (long-only: `-d` belongs to `--duration`)
+    #[arg(long, default_value = "data/raw")]
+    data_dir: PathBuf,
+
+    /// Corpus variant to score: core (committed fixtures), adversarial (fuzzed + sidecar GT), holdout (frozen unseen vendors)
+    #[arg(long, value_enum, default_value = "core")]
+    corpus: CorpusKind,
+
+    /// Duration of benchmark in seconds per engine
+    #[arg(short, long, default_value_t = 3)]
+    duration: u64,
+
+    /// Number of parallel worker threads
+    #[arg(short, long, default_value_t = 16)]
+    threads: usize,
+
+    /// Number of high-density latency samples to collect
+    #[arg(short, long, default_value_t = 10000)]
+    samples: usize,
+
+    /// Path to export the markdown report backing the box
+    #[arg(short, long, default_value = "scorecard_report.md")]
+    out: PathBuf,
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     tracing_subscriber::fmt()
@@ -235,6 +266,7 @@ async fn main() -> Result<()> {
         Commands::Onboard(args) => run_onboard(args),
         Commands::Benchmark(args) => run_benchmark(args).await,
         Commands::Evaluate(args) => run_evaluate(args).await,
+        Commands::Scorecard(args) => run_scorecard(args),
         Commands::Inspect(args) => run_inspect(args),
         Commands::Tamper(args) => run_tamper(args),
     }
@@ -872,6 +904,130 @@ async fn run_benchmark(args: BenchmarkArgs) -> Result<()> {
 // 5. ARCHITECTURAL EVALUATOR (BASELINE VS 3-TIER ENGINE)
 // -----------------------------------------------------------------------------
 
+/// Load the raw-line corpus + sidecar ground truth for a corpus variant.
+/// Shared by `evaluate` and `scorecard` so both commands read byte-identical
+/// inputs (P10.0 glob loader: `*.log`/`*.json`, sorted; a `gt.jsonl` sidecar
+/// auto-loads as authoritative GT; exits 1 when no logs were found).
+fn load_corpus(
+    corpus_kind: CorpusKind,
+    data_dir: &std::path::Path,
+) -> Result<(Vec<String>, GtOverrides)> {
+    let mut corpus: Vec<String> = Vec::new();
+    let mut gt_overrides: GtOverrides = GtOverrides::new();
+
+    let push_file = |corpus: &mut Vec<String>, p: PathBuf| -> Result<()> {
+        if p.exists() {
+            let f = File::open(&p)?;
+            let reader = BufReader::new(f);
+            for l in reader.lines().map_while(Result::ok) {
+                let trimmed = l.trim().to_string();
+                if !trimmed.is_empty() {
+                    corpus.push(trimmed);
+                }
+            }
+        }
+        Ok(())
+    };
+
+    match corpus_kind {
+        CorpusKind::Core => {
+            // P10.0 glob loader: `*.log` / `*.json` files in the data dir,
+            // sorted for determinism. Subdirectories (adversarial/, holdout/,
+            // full/), CSVs and the `gt.jsonl` sidecar (extension `jsonl`) are
+            // excluded — a new vendor/format file is evaluated with ZERO code
+            // changes (was: a hardcoded nine-filename list).
+            let mut paths: Vec<PathBuf> = fs::read_dir(data_dir)
+                .with_context(|| format!("reading corpus dir {}", data_dir.display()))?
+                .filter_map(|entry| entry.ok())
+                .map(|entry| entry.path())
+                .filter(|p| p.is_file())
+                .filter(|p| {
+                    matches!(
+                        p.extension().and_then(|ext| ext.to_str()),
+                        Some("log") | Some("json")
+                    )
+                })
+                .collect();
+            paths.sort();
+            for path in paths {
+                push_file(&mut corpus, path)?;
+            }
+            // Optional sidecar: if the data dir ships a `gt.jsonl` (the
+            // full-dataset run generates one), grade against it with the
+            // same authority as the adversarial/holdout corpora. Absent —
+            // the default `data/raw` — behavior is unchanged (in-line GT).
+            let sidecar = data_dir.join("gt.jsonl");
+            if sidecar.exists() {
+                gt_overrides = load_sidecar_gt(&sidecar)
+                    .with_context(|| format!("loading sidecar GT from {}", sidecar.display()))?;
+                println!(
+                    "[+] Loaded {} sidecar GT overrides (authoritative over in-line GT).",
+                    gt_overrides.len()
+                );
+            }
+        }
+        CorpusKind::Adversarial | CorpusKind::Holdout => {
+            // Sidecar-GT corpora: one dir with `<name>.log` + `gt.jsonl`.
+            let (subdir, log_name) = match corpus_kind {
+                CorpusKind::Adversarial => ("adversarial", "adversarial.log"),
+                _ => ("holdout", "holdout.log"),
+            };
+            let dir = data_dir.join(subdir);
+            push_file(&mut corpus, dir.join(log_name))?;
+            gt_overrides = load_sidecar_gt(&dir.join("gt.jsonl"))
+                .with_context(|| format!("loading sidecar GT from {}", dir.display()))?;
+            println!(
+                "[+] Loaded {} sidecar GT overrides (authoritative over in-line GT).",
+                gt_overrides.len()
+            );
+        }
+    }
+
+    if corpus.is_empty() {
+        println!(
+            "\x1b[1;31m[ERROR] No logs found in {}. Run harvest first!\x1b[0m",
+            data_dir.display()
+        );
+        std::process::exit(1);
+    }
+    Ok((corpus, gt_overrides))
+}
+
+/// `ulpf scorecard` — zero-flag demo run: both engines over the corpus, one
+/// aligned ASCII box (config, throughput, latency deltas, accuracy audit,
+/// telemetry, pass/fail gates, verdict) plus the markdown report.
+fn run_scorecard(args: ScorecardArgs) -> Result<()> {
+    println!(
+        "[*] ULPF scorecard: corpus '{}' from {}",
+        args.corpus.as_str(),
+        args.data_dir.display()
+    );
+    let (corpus, gt_overrides) = load_corpus(args.corpus, &args.data_dir)?;
+    println!(
+        "[+] Loaded {} raw log lines ({} threads, {}s per engine).",
+        corpus.len(),
+        args.threads,
+        args.duration
+    );
+
+    let mut report = EvaluatorEngine::evaluate_with_mode(
+        "all",
+        &corpus,
+        args.duration,
+        args.threads,
+        args.samples,
+        &gt_overrides,
+    );
+    report.corpus_kind = args.corpus.as_str().to_string();
+
+    let out_path = args.out.display().to_string();
+    println!("{}", scorecard::render(&report, &out_path));
+
+    fs::write(&args.out, report.to_markdown())?;
+    println!("[+] Markdown report saved to: {}", args.out.display());
+    Ok(())
+}
+
 async fn run_evaluate(args: EvaluateArgs) -> Result<()> {
     println!(
         "\x1b[1;36m====================================================================\x1b[0m"
@@ -896,84 +1052,7 @@ async fn run_evaluate(args: EvaluateArgs) -> Result<()> {
         "\x1b[1;36m--------------------------------------------------------------------\x1b[0m"
     );
 
-    let mut corpus: Vec<String> = Vec::new();
-    let mut gt_overrides: GtOverrides = GtOverrides::new();
-
-    let push_file = |corpus: &mut Vec<String>, p: PathBuf| -> Result<()> {
-        if p.exists() {
-            let f = File::open(&p)?;
-            let reader = BufReader::new(f);
-            for l in reader.lines().map_while(Result::ok) {
-                let trimmed = l.trim().to_string();
-                if !trimmed.is_empty() {
-                    corpus.push(trimmed);
-                }
-            }
-        }
-        Ok(())
-    };
-
-    match args.corpus {
-        CorpusKind::Core => {
-            // P10.0 glob loader: `*.log` / `*.json` files in the data dir,
-            // sorted for determinism. Subdirectories (adversarial/, holdout/,
-            // full/), CSVs and the `gt.jsonl` sidecar (extension `jsonl`) are
-            // excluded — a new vendor/format file is evaluated with ZERO code
-            // changes (was: a hardcoded nine-filename list).
-            let mut paths: Vec<PathBuf> = fs::read_dir(&args.data_dir)
-                .with_context(|| format!("reading corpus dir {}", args.data_dir.display()))?
-                .filter_map(|entry| entry.ok())
-                .map(|entry| entry.path())
-                .filter(|p| p.is_file())
-                .filter(|p| {
-                    matches!(
-                        p.extension().and_then(|ext| ext.to_str()),
-                        Some("log") | Some("json")
-                    )
-                })
-                .collect();
-            paths.sort();
-            for path in paths {
-                push_file(&mut corpus, path)?;
-            }
-            // Optional sidecar: if the data dir ships a `gt.jsonl` (the
-            // full-dataset run generates one), grade against it with the
-            // same authority as the adversarial/holdout corpora. Absent —
-            // the default `data/raw` — behavior is unchanged (in-line GT).
-            let sidecar = args.data_dir.join("gt.jsonl");
-            if sidecar.exists() {
-                gt_overrides = load_sidecar_gt(&sidecar)
-                    .with_context(|| format!("loading sidecar GT from {}", sidecar.display()))?;
-                println!(
-                    "[+] Loaded {} sidecar GT overrides (authoritative over in-line GT).",
-                    gt_overrides.len()
-                );
-            }
-        }
-        CorpusKind::Adversarial | CorpusKind::Holdout => {
-            // Sidecar-GT corpora: one dir with `<name>.log` + `gt.jsonl`.
-            let (subdir, log_name) = match args.corpus {
-                CorpusKind::Adversarial => ("adversarial", "adversarial.log"),
-                _ => ("holdout", "holdout.log"),
-            };
-            let dir = args.data_dir.join(subdir);
-            push_file(&mut corpus, dir.join(log_name))?;
-            gt_overrides = load_sidecar_gt(&dir.join("gt.jsonl"))
-                .with_context(|| format!("loading sidecar GT from {}", dir.display()))?;
-            println!(
-                "[+] Loaded {} sidecar GT overrides (authoritative over in-line GT).",
-                gt_overrides.len()
-            );
-        }
-    }
-
-    if corpus.is_empty() {
-        println!(
-            "\x1b[1;31m[ERROR] No logs found in {}. Run harvest first!\x1b[0m",
-            args.data_dir.display()
-        );
-        std::process::exit(1);
-    }
+    let (corpus, gt_overrides) = load_corpus(args.corpus, &args.data_dir)?;
 
     println!(
         "[+] Loaded {} diverse raw perimeter log lines into RAM.",

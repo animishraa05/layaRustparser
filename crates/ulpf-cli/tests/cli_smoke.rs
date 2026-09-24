@@ -315,3 +315,87 @@ fn ingest_sigterm_flushes_tail_batch() {
 
     std::fs::remove_dir_all(&tmp).ok();
 }
+
+/// The scorecard subcommand must parse in debug builds (same clap
+/// duplicate-short-flag class of bug as evaluate/benchmark).
+#[test]
+fn scorecard_help_parses_in_debug_build() {
+    let out = Command::new(bin())
+        .args(["scorecard", "--help"])
+        .output()
+        .expect("spawn ulpf scorecard --help");
+    assert!(
+        out.status.success(),
+        "scorecard --help failed (exit {:?}): {}",
+        out.status.code(),
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+/// End-to-end scorecard: a temp 3-line corpus scores BOTH engines, prints
+/// the aligned ASCII box (header, gates, verdict, re-run hint) and writes
+/// the markdown report.
+#[test]
+fn scorecard_end_to_end_prints_box_and_writes_report() {
+    let tmp = std::env::temp_dir().join(format!(
+        "ulpf_scorecard_{}_{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&tmp).unwrap();
+    std::fs::write(
+        tmp.join("demo.log"),
+        "<134>Sep 24 10:00:00 cisco-asa %ASA-6-302013: Built inbound TCP connection 1 for outside:198.51.100.7/443 (198.51.100.7/443) to inside:10.1.2.3/51514 (10.1.2.3/51514)\n\
+         <134>Sep 24 10:00:01 cisco-asa %ASA-6-302014: Teardown TCP connection 2 for outside:198.51.100.7/443 duration 0:00:01 bytes 100\n\
+         <134>Sep 24 10:00:02 cisco-asa %ASA-6-302015: Built outbound TCP connection 3 for inside:10.1.2.3/51514 to outside:198.51.100.8/80\n",
+    )
+    .unwrap();
+
+    let report = tmp.join("scorecard_report.md");
+    let out = Command::new(bin())
+        .args([
+            "scorecard",
+            "--duration",
+            "1",
+            "--threads",
+            "1",
+            "--samples",
+            "10",
+            "--corpus",
+            "core",
+            "--data-dir",
+            tmp.to_str().unwrap(),
+            "--out",
+            report.to_str().unwrap(),
+        ])
+        .output()
+        .expect("spawn ulpf scorecard");
+
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "scorecard failed (exit {:?}): {}",
+        out.status.code(),
+        stdout
+    );
+    assert!(
+        stdout.contains("ULPF SCORECARD"),
+        "box header missing:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("GATE CHECKS"),
+        "gates section missing:\n{stdout}"
+    );
+    assert!(stdout.contains("VERDICT"), "verdict missing:\n{stdout}");
+    assert!(
+        stdout.contains("./target/release/ulpf scorecard"),
+        "re-run hint missing:\n{stdout}"
+    );
+    assert!(report.exists(), "markdown report must be written");
+
+    std::fs::remove_dir_all(&tmp).ok();
+}
