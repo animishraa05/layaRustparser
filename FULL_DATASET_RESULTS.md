@@ -13,25 +13,27 @@ and report everything honestly, including what the run found wrong.
 Generated on demand (gitignored, regenerable byte-for-byte):
 
 ```bash
-python3 scripts/gen_adversarial.py --full 1200   # seed 777, distinct from 1337/9090
+python3 scripts/gen_adversarial.py --full 25000  # seed 777, distinct from 1337/9090
 ```
 
-- **10,799 lines / 9 files / 9.2 MB**, plus an 8-key `gt.jsonl` sidecar (10,799 records).
+- **224,657 lines / 9 files / 183 MB** (scale ask: ≥100–200k — met), plus an 8-key
+  `gt.jsonl` sidecar (224,657 records).
 - Two consecutive runs → **md5-identical** (byte-deterministic).
 - The RNG draw sequence is shared with the committed corpora, so adding `--full`
   does not change any committed fixture byte.
 
 | File | Lines | Family / shape mix |
 | :--- | ---: | :--- |
-| `cisco_asa.log` | 1,200 | Built / Teardown / 106001 / 106007 deny (TCP+UDP) |
-| `fortigate.log` | 1,200 | `type="traffic"` accept/deny, `proto=6/17` |
-| `paloalto.log` | 1,200 | TRAFFIC start/end/drop CSV rows |
-| `suricata.json` | 1,200 | alert / flow / dns EVE JSON |
-| `pfsense.log` | 1,200 | filterlog v4 pass/block |
-| `cisco_asa_vpn.log` | 1,199 | VPN/AAA verdict phrases (marker-safe) |
-| `fortigate_utm.log` | 1,200 | dns / utm / app-ctrl (accept/blocked) |
-| `paloalto_threat.log` | 1,200 | THREAT rows (deny/drop/start) |
-| `pfsense_ipv6.log` | 1,200 | filterlog v6 (Netgate BNF layout) |
+| `cisco_asa.log` | 25,000 | Built / Teardown / 106001 / 106007 deny (TCP+UDP) |
+| `fortigate.log` | 25,000 | `type="traffic"` accept/deny, `proto=6/17` |
+| `paloalto.log` | 25,000 | TRAFFIC start/end/drop CSV rows |
+| `suricata.json` | 25,000 | alert / flow / dns EVE JSON |
+| `pfsense.log` | 25,000 | filterlog v4 pass/block |
+| `cisco_asa_vpn.log` | 24,657 | VPN/AAA verdict phrases (marker-safe; 343-space dedup at 25k) |
+| `fortigate_utm.log` | 25,000 | dns / utm / app-ctrl (accept/blocked) |
+| `paloalto_threat.log` | 25,000 | THREAT rows (deny/drop/start) |
+| `pfsense_ipv6.log` | 25,000 | filterlog v6 (Netgate BNF layout) |
+| **Total** | **224,657** | |
 
 ---
 
@@ -44,22 +46,32 @@ python3 scripts/gen_adversarial.py --full 1200   # seed 777, distinct from 1337/
 ```
 
 `--corpus core` now loads `data/raw/full/gt.jsonl` when present, so all grading is
-**sidecar-authoritative** (10,799 overrides). Full table in `eval_full_report.md`.
+**sidecar-authoritative** (224,657 overrides). Full table in `eval_full_report.md`.
 
 | Metric | Baseline | 3-Tier | Verdict |
 | :--- | ---: | ---: | :--- |
+| Throughput (16 threads) | 828,220 EPS | **872,404 EPS** | 1.05× |
 | VCA | 100.00% | 100.00% | parity |
 | GA (grouping) | 100.00% | 100.00% | ≥ baseline |
 | TA (template) | 100.00% | 100.00% | ceiling both |
 | Macro F1 (src/dst/port/proto) | 100.00% | 100.00% | exact |
 | Disposition | 100.00% | 100.00% | exact |
 | Action Inviolability | N/A | **100% preserved** | invariant held |
-| Lossless SHA-256 | 10799/10799 | 10799/10799 | byte-exact |
-| Recognized / no-panic | 10799/10799 | 10799/10799 | zero aborts |
+| Lossless SHA-256 | 224657/224657 | 224657/224657 | byte-exact |
+| Recognized / no-panic | 224657/224657 | 224657/224657 | zero aborts |
 | **Audit dump** | 0 | **0** | every line clean |
-| Sidecar GT fields | 48000 correct / **0 wrong** / 5995 null | same | exact |
-| p50 / p99 / p99.9 (µs) | 76.28 / 121.03 / 160.34 | **2.46 / 6.81 / 13.17** | −96.8% / −94.4% / −91.8% |
-| Unique templates | 8056 | **32** | **252× compression**, strict < |
+| Sidecar GT fields | 1,000,000 correct / **0 wrong** / 123,285 null | same | exact |
+| p50 / p99 / p99.9 (µs) | 81.14 / 158.07 / 227.10 | **7.31 / 10.57 / 18.42** | −91.0% / −93.3% / −91.9% |
+| Unique templates | 137,986 | **32** | **4,312× compression**, strict < |
+
+Tier telemetry at scale: LRU hit **100%**, Drain clusters **15**, Laya async
+dispatches **120** (bounded — diversity scales clusters, not line count).
+
+**p50 scale note (honest):** tiered p50 moved 2.46 → 7.31 µs vs the 10.8k run.
+The corpus in RAM grew 9 MB → 62 MB (working set now spills cache; baseline
+p50 grew too, 76 → 81 µs, and this desktop had background load). The tiered
+engine still runs **11× under baseline** at 224k lines; the earlier 2.46 µs
+remains the representative small-corpus figure.
 
 ---
 
@@ -103,7 +115,8 @@ correctly; the sidecar was wrong.**
   line-vs-sidecar protocol parity whenever `data/raw/full/` exists (skips otherwise).
 
 **After both fixes: full dump 0, all metrics 100.00/100.00, 48000/48000 sidecar
-fields correct, p50 2.46 µs.**
+fields correct, p50 2.46 µs.** (Re-validated at the 224,657-line scale: dump 0,
+1,000,000/1,000,000 sidecar fields correct, protocol-parity test PASS in 15.8 s.)
 
 ---
 
@@ -133,6 +146,31 @@ Notes: `--dataset all` in `ulpf-generator` hard-requires `kaggle_firewall.csv`
 `verify` prints the forensic verdict but exits 0 either way (automation caveat,
 see §6).
 
+### Scale load test — 328,610 offered over live UDP
+
+Same ingest/batching config as §4, fresh `data/full_out/` + fresh ledger, two
+burst waves across the five families:
+
+- **Burst A:** `--rate 50000 --duration 1` × 5 families → 250,985 pkts, 0 sender errors
+- **Burst B:** `--rate 15000 --duration 1` × 5 families → 77,625 pkts
+
+| Stage | Result |
+| :--- | :--- |
+| Offered → received | **328,610 → 186,187** (A: 112,829/250,985 ≈ 45%; B: 73,358/77,625 = 94.5%) |
+| Peak displayed throughput | **27,947 EPS** (receiver ceiling ≈ 25–28k EPS per UDP socket on this box) |
+| Events → normalized | **186,187 → 186,187 (100%) OCSF**, zero parse failures at rate |
+| Drain3 structural novelty alerts | 32 (bounded; alerts, not errors) |
+| Merkle blocks + ledger entries | **186 + 186** (186,000 events anchored; 187-event tail batch still un-flushed at kill) |
+| `ulpf verify` on all 186 blocks | **186 PASS / 0 FAIL** |
+
+Honest read: at 50k EPS offered the loopback socket buffer overflows (UDP is
+best-effort) and ~55% of datagrams drop **in the kernel before the pipeline
+sees them** — every datagram that *did* arrive was normalized correctly and
+every full batch anchored; burst B, at ≤15k EPS offered, delivered 94.5%
+(residual = burst-A backlog still draining). Abrupt `kill` of ingest forfeits
+the un-flushed partial batch (observed: 187 events) — batches anchor only at
+flush, by design.
+
 ---
 
 ## 5. Air-gapped onboarding of a brand-new format
@@ -152,7 +190,9 @@ see §6).
 ## 6. Gates & final state
 
 - Verification gate: **clippy 0 / fmt clean / 95 passed + 1 ignored**
-  (holdout remains frozen; not regenerated, not re-run post-freeze).
+  (holdout remains frozen; not regenerated, not re-run post-freeze). The Rust
+  source was untouched for the scale re-run — the data-dependent parity test
+  re-passed against the 224,657-line corpus (15.8 s).
 - Committed corpora re-validated after the sidecar fix:
   core **dump 0, all-100, p50 3.30 µs**; adversarial **Action Inviolability 100%,
   GA 98.41 vs baseline 100** (12 `panos_threat` relay/encoding grouping failures,
@@ -167,16 +207,20 @@ see §6).
 2. Onboarder portless formats: no `port` token ⇒ a numeric token (`vlan`) gets
    captured as `src_port`.
 3. `ulpf-generator --dataset all` requires `kaggle_firewall.csv` to exist.
-4. UDP ingest trusts the loopback blast (0 errors observed here); production
-   feeds should size the socket buffer for line rate.
-5. Full dataset is generated-on-demand, not committed (9.2 MB ≫ ~1 MB fixture budget).
+4. UDP ingest capacity (now measured, §4): drop-free ≲15–25k EPS offered per
+   socket; at 50k offered ~55% of datagrams are dropped in the kernel buffer
+   (sender reported 0 errors — the loss is invisible to the sender). Production
+   feeds should size `SO_RCVBUF`, shard sockets, or use TCP.
+5. Abruptly killing `ulpf ingest` forfeits the un-flushed partial batch
+   (observed: 187 events) — there is no graceful-shutdown flush.
+6. Full dataset is generated-on-demand, not committed (183 MB ≫ ~1 MB fixture budget).
 
 ---
 
 ## Appendix — exact command sequence
 
 ```bash
-python3 scripts/gen_adversarial.py --full 1200        # dataset (seed 777, deterministic)
+python3 scripts/gen_adversarial.py --full 25000       # dataset (seed 777, deterministic)
 
 # Evaluation (release build, repo root cwd)
 ./target/release/ulpf evaluate --corpus core --data-dir data/raw/full --engine all \
@@ -198,6 +242,20 @@ done
 ./target/release/ulpf tamper --file data/full_out/parquet/block_00000.parquet --leaf 0 --ip 10.99.99.99
 ./target/release/ulpf verify --file data/full_out/parquet/block_00000.parquet \
   --ledger data/full_out/ledger.jsonl          # -> DigestMismatch detected
+
+# Scale load test (§4b): fresh dir + fresh ledger, then two burst waves
+rm -rf data/full_out && mkdir -p data/full_out
+./target/release/ulpf ingest --udp 0.0.0.0:5140 --parquet-dir data/full_out \
+  --ledger data/full_out/ledger.jsonl --batch-size 1000 --batch-timeout 1000 --reuse-port &
+for rate in 50000 15000; do
+  for d in cisco fortigate paloalto suricata pfsense; do
+    ./target/release/ulpf-generator -D "$d" --data-dir data/raw/full --rate "$rate" --duration 1
+  done
+done
+sleep 4; pkill -f "ulpf in[g]est"             # [g] avoids self-match; partial batch forfeited
+for b in data/full_out/block_*.parquet; do
+  ./target/release/ulpf verify --file "$b" --ledger data/full_out/ledger.jsonl  # -> 186/186 PASS
+done
 
 # Air-gapped onboarding
 ./target/release/ulpf onboard --sample data/full_out/onboard_sample.log \

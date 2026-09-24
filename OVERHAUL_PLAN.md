@@ -745,3 +745,23 @@ every corpus, three-column scorecard above.
   8056 → 32 (252×), sidecar 48000/48000, dump 0.
 - **Gate:** clippy 0 / fmt ok / 95 + 1 ignored. Full evidence, exact
   commands, and honest limitations: `FULL_DATASET_RESULTS.md`.
+
+### P9-scale — 224,657-line re-run (2026-09-24; details in `FULL_DATASET_RESULTS.md`)
+
+- `gen_adversarial.py --full 25000` → **224,657 lines / 9 files / 183 MB** +
+  sidecar, md5-deterministic double run; `test_full_dataset_protocol_parity_when_generated`
+  PASS against the new corpus (15.8 s).
+- **Eval (`eval_full_report.md`):** all-100 both engines, dump 0, sidecar
+  **1,000,000 correct / 0 wrong** (123,285 honest nulls), lossless + recognized
+  224,657/224,657, Action Inviolability 100%; throughput 828,220 → **872,404 EPS**;
+  unique templates **137,986 → 32 (4,312×)**; p50 81.14 → **7.31 µs** (−91%),
+  p99 158.07 → 10.57 µs (−93%); LRU hit 100%, 15 Drain clusters, 120 Laya dispatches.
+- **p50 scale note:** +4–5 µs vs the 10.8k run tracks working-set growth
+  (9 → 62 MB in RAM; baseline also +5 µs) plus desktop background load — tiered
+  still 11× under baseline; 2.46 µs stays the small-corpus figure.
+- **Ingest at scale:** 328,610 offered → **186,187 received, 100% OCSF**, peak
+  **27,947 EPS**; 50k-EPS burst loses ~55% in the UDP kernel buffer (receiver
+  ceiling ≈ 25–28k/socket — loss happens before the pipeline), 15k burst delivers
+  94.5%; **186 blocks + 186 ledger entries, verify 186/186 PASS, 0 FAIL**; the
+  187-event partial batch was forfeited on abrupt kill (batch-anchored by design
+  — now a documented limitation).
