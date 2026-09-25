@@ -13,7 +13,7 @@ Modern cyber defense platforms for national critical infrastructure demand three
 2. **Cryptographic Proof of Chain of Custody:** Mathematical guarantees that no adversary with administrative access can alter, inject, or delete an archived log record without immediate detection.
 3. **Strict Air-Gap Portability:** Autonomous execution in isolated defense environments with zero dependencies on external cloud APIs, internet connectivity, or proprietary GPU hardware.
 
-The initial proposal document ([`Ulpf -1.pdf`](../Ulpf%20-1.pdf), titled *"ULPF Deep-Dive Engineering & Architecture Specification / A-HALF"*) introduced valuable conceptual goals. However, several of its theoretical mechanisms suffered from operational flaws when evaluated against real-world network protocols and containerized air-gapped environments.
+The initial proposal document ([`Ulpf-proposal.pdf`](reference/Ulpf-proposal.pdf), titled *"ULPF Deep-Dive Engineering & Architecture Specification / A-HALF"*) introduced valuable conceptual goals. However, several of its theoretical mechanisms suffered from operational flaws when evaluated against real-world network protocols and containerized air-gapped environments.
 
 This document presents an exhaustive, subsystem-by-subsystem comparative breakdown contrasting **Traditional Log Pipelines**, the **Theoretical Concept in `Ulpf -1.pdf`**, and the **Production Rust System Implemented in ULPF**.
 

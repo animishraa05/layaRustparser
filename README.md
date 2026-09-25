@@ -63,7 +63,7 @@ Full argument, shipper-by-shipper comparison, the [vendor support matrix](docs/W
 
 ![ULPF 3-tier pipeline: UDP/TCP syslog into Tier-1 LRU, Tier-2 Drain miner, Tier-3 Laya engine, then zero-copy extractors -> OCSF 1.3 event -> batcher -> SHA-256 + UUIDv7 + Merkle leaf -> ledger.jsonl and Parquet WORM -> ulpf verify 0/1/2](docs/diagrams/three-tier-pipeline.png)
 
-**From proposal to production.** The original SIH proposal ([`Ulpf -1.pdf`](Ulpf%20-1.pdf)) sketched a Python stack — Redpanda queue, WASM parser plugins, an offline LLM for mask synthesis, ClickHouse lake. What shipped is leaner: air-gap and determinism killed the LLM (non-deterministic outputs break forensic reproducibility), the queue (in-memory buffering suffices at this scale), and the plugins (native Rust needs no sandbox). What survived: OCSF as the single schema, Drain as the clustering core, lossless raw retention:
+**From proposal to production.** The original SIH proposal ([`Ulpf-proposal.pdf`](docs/reference/Ulpf-proposal.pdf)) sketched a Python stack — Redpanda queue, WASM parser plugins, an offline LLM for mask synthesis, ClickHouse lake. What shipped is leaner: air-gap and determinism killed the LLM (non-deterministic outputs break forensic reproducibility), the queue (in-memory buffering suffices at this scale), and the plugins (native Rust needs no sandbox). What survived: OCSF as the single schema, Drain as the clustering core, lossless raw retention:
 
 ![Theoretical proposal in red engineered into the shipped ULPF pipeline in green](docs/diagrams/proposal-vs-reality.png)
 
