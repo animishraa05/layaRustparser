@@ -129,8 +129,10 @@ impl SignatureLruCache {
             return 0;
         }
 
-        // Fast path: inspect initial window up to 96 bytes for distinct vendor anchors
-        let window_len = len.min(96);
+        // Fast path: inspect initial window up to 96 bytes for distinct vendor anchors.
+        // Floored to a char boundary: slicing multibyte UTF-8 (e.g. a
+        // Unicode hostname) mid-char panics, and this runs on the hot path.
+        let window_len = raw.floor_char_boundary(len.min(96));
         let window = &raw[..window_len];
 
         let mut hasher = FxHasher64::default();
@@ -140,8 +142,10 @@ impl SignatureLruCache {
             // format (device vendor lives in the header, same cached format).
             hasher.write(b"cef_format");
         } else if let Some(pos) = window.find("%ASA-") {
-            // Hash the ASA message tag (e.g. %ASA-6-302013)
-            let tag_slice = &window[pos..window.len().min(pos + 16)];
+            // Hash the ASA message tag (e.g. %ASA-6-302013). The +16 cut is
+            // floored: a multibyte tail must not panic the hot path.
+            let end = window.floor_char_boundary(window.len().min(pos + 16));
+            let tag_slice = &window[pos..end];
             hasher.write(tag_slice.as_bytes());
         } else if window.contains("devname=")
             || window.contains("type=\"traffic\"")
@@ -267,5 +271,17 @@ mod tests {
         assert_eq!(stats.hits, 2);
         assert_eq!(stats.misses, 1);
         assert!((stats.hit_ratio - 0.666).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_signature_hash_never_panics_on_multibyte_prefix() {
+        // 47 × 'é' (94 bytes) + '€' (bytes 94-96): the 96-byte window ends
+        // INSIDE the euro sign. Byte slicing there panics ("not a char
+        // boundary") — the hot path must floor to a boundary instead.
+        let raw = "é".repeat(47)
+            + "€ %ASA-6-302013: Built inbound UDP connection 1 for outside:1.1.1.1/53";
+        let h1 = SignatureLruCache::compute_signature_hash(&raw);
+        let h2 = SignatureLruCache::compute_signature_hash(&raw);
+        assert_eq!(h1, h2, "hashing must stay deterministic");
     }
 }
