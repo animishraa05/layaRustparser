@@ -11,10 +11,10 @@
 5. **Review:** every PR needs 1 human approval + green CI (enforced by ruleset). The `needs-reviewer` label clears on first review. Human checks architecture + invariants; bot checks style/nits.
 6. **Merge:** squash-merge, delete the branch. Issue closes automatically via `Closes #N`.
 
-Moved from the old URL? Point your clone at the org:
+Moved from the old URL? Point your clone at the org (SSH recommended — it also sidesteps token-scope push limits on workflow files):
 
 ```bash
-git remote set-url origin https://github.com/guptchar/layaRustparser.git
+git remote set-url origin git@github.com:guptchar/layaRustparser.git
 ```
 
 ## Setup
