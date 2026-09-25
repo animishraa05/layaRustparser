@@ -31,7 +31,7 @@ Every accuracy number links to a timestamped report from `ulpf evaluate`, and ev
 
 All figures measured on the same machine (Linux x86_64, rustc 1.96.0), release build, `--engine all --duration 3 --threads 16`. Reports are committed; timestamps inside them prove freshness (core re-run 2026-09-25, other corpora 2026-09-24).
 
-| Corpus | Lines | Accuracy (VCA / GA / TA / F1 / Disposition) | p50 Baseline → 3-Tier | Throughput Baseline → 3-Tier | Audit dump |
+| Corpus | Lines | Accuracy (VCA / GA / TA / MeanAcc / Disposition) | p50 Baseline → 3-Tier | Throughput Baseline → 3-Tier | Audit dump |
 | :--- | ---: | :--- | :--- | :--- | :---: |
 | **Core** (committed fixtures) | 1,720 | **100 / 100 / 100 / 100 / 100 %** | 73.19 → **2.88 µs** (−96.1%) | 811,861 → 785,456 EPS (0.97×) | **0** |
 | **Full scale** (regenerable) | **224,657** | **100 / 100 / 100 / 100 / 100 %** | 1,104.72 → **7.28 µs** (−99.3%) | 395,842 → **849,481 EPS (2.15×)** | **0** |
@@ -229,7 +229,7 @@ Known gaps, each one measured:
 
 ## Project status & roadmap
 
-**Done (P1 → P10.0, 38 commits):** measurement-first ruler fixes → vendor extractors → CEF → parse-order/LRU tiers → audit null-correct rules → dynamic message-code anchors → GA/TA to 100 both engines → deterministic adversarial + frozen holdout corpora → sidecar ground truth → full-scale 224,657-line validation → 186-block live chain → CLI hardening → ASA verdict-phrase union → fresh re-run evidence → vanilla-vs-3-tier duel surfaced in `ulpf scorecard`.
+**Done (P1 → P10.0):** measurement-first ruler fixes → vendor extractors → CEF → parse-order/LRU tiers → audit null-correct rules → dynamic message-code anchors → GA/TA to 100 both engines → deterministic adversarial + frozen holdout corpora → sidecar ground truth → full-scale 224,657-line validation → 186-block live chain → CLI hardening → ASA verdict-phrase union → fresh re-run evidence → vanilla-vs-3-tier duel surfaced in `ulpf scorecard`.
 
 **In progress (P10):** universal wire formats (LEEF, generic KV/JSON/XML, RFC5424 SD) · vendor expansion (~10, ISRO-relevant) · multi-source measurement + Mapping-Coverage metric · container < 35 MB (P10.7) · submission artifacts (readme/pitch/video) · deny-class GA stretch (P10.9, droppable).
 

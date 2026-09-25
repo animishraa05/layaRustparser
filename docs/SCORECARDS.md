@@ -15,7 +15,7 @@ Each metric below shows how it is graded: the exact definition, the line in [`cr
 | **GA** (grouping accuracy, LogPai) | per engine cluster, count the records sharing that cluster's majority GT template tag; GA = Σ(majority) / N | `:1928–1959` | the same per-line GT template tag |
 | **TA** (template accuracy) | `template_is_valid`: the cluster template must be a non-empty **exact token-aligned generalization** of the record's own masked line — same token count, every non-`<*>` token identical at its position, syslog GT tag (`%ASA-6-302013:`) preserved verbatim. **Token-F1 ≡ 1.0 — no similarity threshold** | `:1618–1640` | per-line GT tag (sidecar or in-line) |
 | **Field accuracy ×5** (src/dst IP, src/dst port, protocol) | extracted value must appear **verbatim** in the raw line; an honest `null` grades correct *only* when the raw line carries no such marker (P5 null-correct rule); protocol may match by name or IANA number | `:1796–1891` | the raw bytes themselves — plus sidecar `gt_fields` where a sidecar exists |
-| **"Macro F1"** † | arithmetic **mean of those five field accuracies** | `:1970` | — |
+| **Mean field accuracy** | arithmetic **mean of the five IP/port/protocol accuracies** | `:1970` | — |
 | **Disposition** | strict string equality against GT when the line carries a label; an unlabeled line grades correct only if the engine emits a non-`Unknown` disposition | `:1893–1918` | sidecar `gt_disposition`, else in-line action keywords |
 | **Action inviolability** | `verify_action_preservation()` — no Drain cluster may hold both an allow-class and a deny-class anchor token → 100 or 0, never in between | `:1972–1976` | the anchor vocabulary itself |
 | **Sidecar field grading** | null-vs-wrong discipline: a non-null expectation grades correct/wrong; an honest null counts as null — never silently skipped | `:2004` (`grade_gt_fields`) | `gt.jsonl` sidecars (adversarial · holdout · full), keyed by verbatim raw line |
@@ -23,7 +23,7 @@ Each metric below shows how it is graded: the exact definition, the line in [`cr
 
 **Ground-truth policy:** where a sidecar exists it wins over in-line derivation (`:1693–1703`), because fuzz mutations destroy the in-line markers. On the adversarial and holdout corpora the sidecar is therefore the only reliable ground truth left. The core corpus (1,720 lines) has no sidecar; its GT comes from the lines themselves. Sidecars exist for adversarial (757), holdout (200) and full-scale (224,657 — see the 1,000,000-correct-field table in the README headline results).
 
-† **About the name "Macro F1":** it is not a precision/recall F1. The number is the mean of five exact-match field accuracies (`evaluator.rs:1970`), so read it as **mean field accuracy**. The old name stays only so the README, the reports and the matrix all match the generated output.
+† **About the old name "Macro F1":** this number is the mean of five exact-match field accuracies (`evaluator.rs:1970`), never a precision/recall F1 — the label is retired in code and every re-runnable report. The frozen holdout report (`eval_holdout_report.md`, P8) and the historical logs (`OVERHAUL_PLAN.md`, `FULL_DATASET_RESULTS.md`) still carry the old label; read it as mean field accuracy.
 
 ## 4.1 Core corpus — 1,720 committed fixture lines · [`eval_hardcore_report.md`](../eval_hardcore_report.md)
 
@@ -32,7 +32,7 @@ Each metric below shows how it is graded: the exact definition, the line in [`cr
 | Vendor Classification (VCA) | 100.00% | **100.00%** | = |
 | Grouping Accuracy (GA, Loghub-2.0) | 100.00% | **100.00%** | = |
 | Template Accuracy (TA) | 100.00% | **100.00%** | = |
-| Field Extraction Macro F1 † (IP/port/proto) | 100.00% | **100.00%** | = |
+| Field Extraction Mean Accuracy (IP/port/proto) | 100.00% | **100.00%** | = |
 | Disposition Resolution (OCSF action) | 100.00% | **100.00%** | = |
 | Action Inviolability | N/A | **100% preserved** | met |
 | Unique templates (compression) | 1,407 | **73** | **19.3× fewer** |
@@ -44,7 +44,7 @@ Each metric below shows how it is graded: the exact definition, the line in [`cr
 | :--- | ---: | ---: | :---: |
 | Throughput | 395,842 EPS | **849,481 EPS** | **2.15×** |
 | Data bandwidth | 77.68 MB/s | **237.26 MB/s** | **3.05×** |
-| VCA / GA / TA / F1 / Disposition | 100 / 100 / 100 / 100 / 100 % | **100 / 100 / 100 / 100 / 100 %** | = (ceiling) |
+| VCA / GA / TA / MeanAcc / Disposition | 100 / 100 / 100 / 100 / 100 % | **100 / 100 / 100 / 100 / 100 %** | = (ceiling) |
 | Unique templates | 137,986 | **32** | **4,312× compression** |
 | Sidecar GT (5 field keys) | — | **1,000,000 correct · 0 wrong** | exact match |
 | Audit-dump mismatches | — | **0 / 224,657** | clean |
@@ -55,7 +55,7 @@ Each metric below shows how it is graded: the exact definition, the line in [`cr
 | :--- | ---: | ---: | :--- |
 | VCA | 96.30% | 96.30% | mutated vendor prefixes — parity |
 | GA | 100.00% | 98.41% | −1.59 pt: deny-class variants only (see README limitations) |
-| TA / F1 / Disposition | 100 / 97.15 / 93.53 % | **100** / 97.15 / 93.53 % | parity |
+| TA / MeanAcc / Disposition | 100 / 97.15 / 93.53 % | **100** / 97.15 / 93.53 % | parity |
 | Action Inviolability | N/A | **100% preserved** | anchor tokens held under fuzz |
 | GT fields wrong | 1,524 | **1,524 (identical)** | fuzzer-caused; engine delta = 0 |
 

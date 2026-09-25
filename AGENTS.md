@@ -49,7 +49,7 @@ Performance gates when touching hot path or miner: p50 < 5.0 µs, LRU hit rate >
 
 - **`cargo run -p ulpf-cli -- evaluate|benchmark` in debug builds:** the old duplicate `-d` short flag (`data_dir` vs `duration`) that tripped clap debug-asserts was removed in P10.0 — debug now works. Release is still the intended eval mode (numbers are what count).
 - **CLI defaults assume cwd = repo root** (`data/raw`, `data/parquet`, `data/ledger.jsonl`). Run binaries from the root or pass explicit paths.
-- **README drift:** README Step 3 shows `ingest --proto udp --bind ... --out-dir` and Step 6 shows `onboard --name` — the real flags are `--udp/--tcp/--parquet-dir` and `--vendor/--model/--out`. Trust `--help`.
+- **`ulpf --help` is authoritative for flags; README quick-start flags verified correct** (a pre-slim drift note about `ingest --proto`/`onboard --name` retired with the slim — the examples it cited no longer exist).
 - **`scripts/run_demo.sh` is now non-destructive (P10.0):** it writes to scratch `data/demo/` (gitignored), never the tracked `data/parquet/` fixtures. `scripts/simulate_tamper.py` still mutates the Parquet block it is pointed at — the no-arg default is the intentionally-tampered `data/parquet/block_00000.parquet`; pass an explicit path for anything else.
 - **Tracked fixtures are deliberately odd:** `data/parquet/block_00000.parquet` is *intentionally* tampered (`ulpf verify` must FAIL on it); `block_00001.parquet` is the valid one. Don't "fix" block 0.
 - **Known flaky test under load:** `ulpf-core/tests/parser_tests.rs::test_classification_sub_microsecond_benchmark` asserts < 2 µs/classification in a *debug* build and can fail on busy machines. Re-run before assuming you broke something.

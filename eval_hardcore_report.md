@@ -1,6 +1,6 @@
 # ULPF Hardcore Architectural & Accuracy Telemetry Report
 
-**Timestamp:** 2026-09-25T02:49:08.239835187+00:00  
+**Timestamp:** 2026-09-25T03:51:45.991782766+00:00  
 **Environment:** Linux (x86_64, 16 Cores) | **Workers:** 16 parallel threads  
 **Duration:** 3s per engine | **Corpus:** 1720 logs (565.78 KB)  
 **Corpus Kind:** `core` (core = fixed file set, adversarial/holdout = sidecar-GT corpora)  
@@ -11,16 +11,16 @@
 
 | Benchmark Dimension | Baseline (`UniversalParser`) | 3-Tier (`LRU+Drain+Laya`) | Speedup / Delta |
 | :--- | :---: | :---: | :---: |
-| **Throughput (EPS)** | **811861 EPS** | **785456 EPS** | **0.97x** |
-| **Data Bandwidth (MB/s)** | **260.72 MB/s** | **252.25 MB/s** | **0.97x** |
-| **Median Latency (p50)** | 73.19 µs | **2.88 µs** | **-96.1%** |
-| **99th %ile Latency (p99)** | 106.84 µs | **7.93 µs** | **-92.6%** |
+| **Throughput (EPS)** | **730088 EPS** | **741947 EPS** | **1.02x** |
+| **Data Bandwidth (MB/s)** | **234.49 MB/s** | **238.27 MB/s** | **1.02x** |
+| **Median Latency (p50)** | 856.47 µs | **5.11 µs** | **-99.4%** |
+| **99th %ile Latency (p99)** | 1413.68 µs | **12.04 µs** | **-99.1%** |
 | **Vendor Classification (VCA)** | **100.00%** | **100.00%** | Ground-Truth Exact Match |
 | **Grouping Accuracy (GA %)** | **100.00%** | **100.00%** | Loghub-2.0 Standard |
 | **Template Accuracy (TA %)** | **100.00%** | **100.00%** | Template Validity (generalization-correct vs masked line) |
 | **Oracle GA Ceiling (GT-hash, unfair)** | **100.00%** | **100.00%** | Labeled Ceiling — Not a Fair Baseline |
 | **Unique Templates (compression)** | **1407** | **73** | Strictly Fewer vs Naive Baseline (§5.2) |
-| **Field Extraction Macro F1** | **100.00%** | **100.00%** | IP/Port/Proto Extraction |
+| **Field Extraction Mean Accuracy** | **100.00%** | **100.00%** | IP/Port/Proto Extraction |
 | **Disposition Resolution Accuracy** | **100.00%** | **100.00%** | OCSF Action Mapping |
 | **Action Inviolability** | N/A | **100% PRESERVED** | `ALLOW`/`DENY` isolated |
 
@@ -41,12 +41,12 @@
 
 | Percentile Observation | Baseline (µs) | 3-Tier Engine (µs) | Latency Reduction |
 | :--- | :---: | :---: | :---: |
-| **p1 (Fastest 1%)** | 68.72 µs | 1.38 µs | -98.0% |
-| **p50 (Median)** | 73.19 µs | 2.88 µs | -96.1% |
-| **p90** | 82.17 µs | 4.97 µs | -93.9% |
-| **p99** | 106.84 µs | 7.93 µs | -92.6% |
-| **p99.9 (Three Nines)** | 144.66 µs | 12.18 µs | -91.6% |
-| **Worst Case (Max)** | 289.12 µs | 42.99 µs | -85.1% |
+| **p1 (Fastest 1%)** | 473.70 µs | 2.72 µs | -99.4% |
+| **p50 (Median)** | 856.47 µs | 5.11 µs | -99.4% |
+| **p90** | 1069.13 µs | 8.81 µs | -99.2% |
+| **p99** | 1413.68 µs | 12.04 µs | -99.1% |
+| **p99.9 (Three Nines)** | 1554.58 µs | 23.13 µs | -98.5% |
+| **Worst Case (Max)** | 1717.37 µs | 51.88 µs | -97.0% |
 
 ## 3. Academic Accuracy & Quality Breakdown
 
