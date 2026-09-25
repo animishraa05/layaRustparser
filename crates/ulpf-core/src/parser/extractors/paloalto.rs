@@ -28,7 +28,7 @@ impl PaloAltoExtractor {
         // Locate the base offset using the TRAFFIC type token
         let traffic_idx = fields
             .iter()
-            .position(|&f| f.eq_ignore_ascii_case("TRAFFIC"))
+            .position(|f| f.eq_ignore_ascii_case("TRAFFIC"))
             .unwrap_or(3);
         let base = traffic_idx as isize - 3;
 
