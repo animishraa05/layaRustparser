@@ -63,6 +63,12 @@ Full argument, shipper-by-shipper comparison, the [vendor support matrix](docs/W
 
 ![ULPF 3-tier pipeline: UDP/TCP syslog into Tier-1 LRU, Tier-2 Drain miner, Tier-3 Laya engine, then zero-copy extractors -> OCSF 1.3 event -> batcher -> SHA-256 + UUIDv7 + Merkle leaf -> ledger.jsonl and Parquet WORM -> ulpf verify 0/1/2](docs/diagrams/three-tier-pipeline.png)
 
+**From proposal to production.** The original SIH proposal ([`Ulpf -1.pdf`](Ulpf%20-1.pdf)) sketched a Python stack — Redpanda queue, WASM parser plugins, an offline LLM for mask synthesis, ClickHouse lake. What shipped is leaner: air-gap and determinism killed the LLM (non-deterministic outputs break forensic reproducibility), the queue (in-memory buffering suffices at this scale), and the plugins (native Rust needs no sandbox). What survived: OCSF as the single schema, Drain as the clustering core, lossless raw retention:
+
+![Theoretical proposal in red engineered into the shipped ULPF pipeline in green](docs/diagrams/proposal-vs-reality.png)
+
+Subsystem-by-subsystem account: [`docs/ARCHITECTURE_FINAL.md`](docs/ARCHITECTURE_FINAL.md).
+
 **Why two engines?** The frozen Aho-Corasick **baseline** (`UniversalParser`) is the control; the 3-tier pipeline runs on the same corpora and has to beat it on latency and accuracy at every scale (2.15× EPS at 224k; small-corpus exception noted in [Honest limitations](#honest-limitations)). Every scorecard prints both columns side by side, so no number is graded against itself. Workspace map (5 crates): [`AGENTS.md`](AGENTS.md#crate-map). Metric rulers, per-corpus scorecards, latency spectrum and forensic guarantees: [`docs/SCORECARDS.md`](docs/SCORECARDS.md).
 
 ## Reproduce the proof
@@ -102,7 +108,7 @@ cargo test --workspace --no-fail-fast
 
 ## SIH26156 requirements matrix
 
-| # | Requirement (verbatim from [`docs/SIH_EVALUATION_DOSSIER.md`](docs/SIH_EVALUATION_DOSSIER.md)) | Status | Evidence |
+| # | Requirement (verbatim from [`docs/archive/SIH_EVALUATION_DOSSIER.md`](docs/archive/SIH_EVALUATION_DOSSIER.md)) | Status | Evidence |
 | :--- | :--- | :---: | :--- |
 | a | Preserve complete raw event data without information loss | yes | `raw_log` byte-exact + `raw_hash == SHA-256(raw)` on **all 224,657** full-scale lines |
 | b | Extract and parse source-specific attributes | yes | zero-copy extractors (ASA/FortiGate/PAN-OS/pfSense/Suricata/CEF) — **mean field accuracy 100%** on core & full ([rulers](docs/SCORECARDS.md#how-every-metric-is-measured-the-rulers)) |
@@ -116,7 +122,7 @@ cargo test --workspace --no-fail-fast
 | j | Deployable in an air-gapped network | yes | single self-contained binaries, **zero** outbound calls anywhere in the runtime path |
 | k | Packaged in a container for platform independence (target < 35 MB) | partial | binary **18.6 MB, within the 35 MB target** (`ls -la target/release/ulpf`); container slim-down in progress — roadmap P10.7 |
 
-Full dossier with per-requirement narrative: [`docs/SIH_EVALUATION_DOSSIER.md`](docs/SIH_EVALUATION_DOSSIER.md).
+Full dossier with per-requirement narrative: [`docs/archive/SIH_EVALUATION_DOSSIER.md`](docs/archive/SIH_EVALUATION_DOSSIER.md).
 
 ## Air-gapped deployment
 
@@ -219,11 +225,11 @@ Known gaps, each one measured:
 | [`FULL_DATASET_RESULTS.md`](FULL_DATASET_RESULTS.md) | 224,657-line end-to-end run: evals, live 186-block chain, onboarding, what we found wrong |
 | [`OVERHAUL_PLAN.md`](OVERHAUL_PLAN.md) | The P1–P10 measurement-first overhaul plan + per-phase execution log |
 | [`AGENTS.md`](AGENTS.md) | Contributor handbook: invariants, crate map, verification gate, gotchas, extension recipes |
-| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | High-assurance architecture spec: data plane, integrity plane, math-grade reasoning |
+| [`docs/archive/ARCHITECTURE.md`](docs/archive/ARCHITECTURE.md) | High-assurance architecture spec: data plane, integrity plane, math-grade reasoning |
 | [`docs/diagrams/`](docs/diagrams/) | Graphviz `.dot` sources + rendered `.png` for every diagram (regenerate with `dot -Tpng -Gdpi=144`) |
-| [`docs/SIH_EVALUATION_DOSSIER.md`](docs/SIH_EVALUATION_DOSSIER.md) | Requirement-by-requirement defense dossier (a–k) + out-of-scope honesty section |
-| [`docs/SIMPLIFIED_EXPLANATION_AND_BENCHMARKS.md`](docs/SIMPLIFIED_EXPLANATION_AND_BENCHMARKS.md) | Plain-language guide (airport analogy) + benchmark deep-dive for non-experts |
-| [`docs/DETAILED_IMPLEMENTATION_VS_PROPOSAL.md`](docs/DETAILED_IMPLEMENTATION_VS_PROPOSAL.md) | Implemented system vs original proposal, subsystem by subsystem |
+| [`docs/archive/SIH_EVALUATION_DOSSIER.md`](docs/archive/SIH_EVALUATION_DOSSIER.md) | Requirement-by-requirement defense dossier (a–k) + out-of-scope honesty section |
+| [`docs/archive/SIMPLIFIED_EXPLANATION_AND_BENCHMARKS.md`](docs/archive/SIMPLIFIED_EXPLANATION_AND_BENCHMARKS.md) | Plain-language guide (airport analogy) + benchmark deep-dive for non-experts |
+| [`docs/ARCHITECTURE_FINAL.md`](docs/ARCHITECTURE_FINAL.md) | Implemented system vs original proposal, subsystem by subsystem |
 | [`docs/PRESENTATION.md`](docs/PRESENTATION.md) · [`docs/DEMO.md`](docs/DEMO.md) | 5-slide presentation script · 2-minute demo video script · [printable PDFs in `docs/`](docs/) |
 | [`eval_hardcore_report.md`](eval_hardcore_report.md) · [`eval_full_report.md`](eval_full_report.md) · [`eval_adversarial_report.md`](eval_adversarial_report.md) · [`eval_holdout_report.md`](eval_holdout_report.md) · [`eval_duel_report.md`](eval_duel_report.md) | The committed accuracy scorecards + the vanilla-vs-3-tier duel this README cites |
 | [`scripts/run_demo.sh`](scripts/run_demo.sh) | One-command non-destructive demo |

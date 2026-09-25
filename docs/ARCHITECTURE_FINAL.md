@@ -13,7 +13,7 @@ Modern cyber defense platforms for national critical infrastructure demand three
 2. **Cryptographic Proof of Chain of Custody:** Mathematical guarantees that no adversary with administrative access can alter, inject, or delete an archived log record without immediate detection.
 3. **Strict Air-Gap Portability:** Autonomous execution in isolated defense environments with zero dependencies on external cloud APIs, internet connectivity, or proprietary GPU hardware.
 
-The initial proposal document ([`Ulpf -1.pdf`](file:///home/human/logs_proj/Ulpf%20-1.pdf), titled *"ULPF Deep-Dive Engineering & Architecture Specification / A-HALF"*) introduced valuable conceptual goals. However, several of its theoretical mechanisms suffered from operational flaws when evaluated against real-world network protocols and containerized air-gapped environments.
+The initial proposal document ([`Ulpf -1.pdf`](../Ulpf%20-1.pdf), titled *"ULPF Deep-Dive Engineering & Architecture Specification / A-HALF"*) introduced valuable conceptual goals. However, several of its theoretical mechanisms suffered from operational flaws when evaluated against real-world network protocols and containerized air-gapped environments.
 
 This document presents an exhaustive, subsystem-by-subsystem comparative breakdown contrasting **Traditional Log Pipelines**, the **Theoretical Concept in `Ulpf -1.pdf`**, and the **Production Rust System Implemented in ULPF**.
 
@@ -297,3 +297,28 @@ We engineered a **100% Air-Gapped Deterministic Heuristic Synthesizer** ([`crate
 | **(k)** | Packaged in a container for platform independence | **100% Covered** (Multi-stage Docker build producing < 35 MB lean image) |
 
 **Conclusion:** All 11 expected requirements (100%) are fully implemented, verified, and demonstrated in production Rust code.
+
+---
+
+## 5. References (carried over from the original SRS)
+
+> Salvaged from `Ulpf.md` (the pre-build proposal SRS, removed from the repo because it describes unbuilt Python-stack architecture) so the research trail is not lost. All Sep 2026. Primary sources, not blogs.
+
+1. OCSF 1.4.0 — `https://schema.ocsf.io/1.4.0/` & Release `https://github.com/ocsf/ocsf-schema/releases/tag/1.4.0` (2025-02-05).
+2. OCSF 1.8 — `tag/1.8.0` (Mar 16 2026) — `ai_operation`.
+3. OCSF 1.9 — `tag/1.9.0` — `record_integrity`.
+4. OCSF Docs v1.17 Apr 2026 — `github.com/ocsf/ocsf-docs/blob/main/overview/understanding-ocsf.md`.
+5. DeepParse — Shetaia & Kauffman, *Hybrid Log Parsing...*, EASE 2026 — `arxiv:2604.20553` & `NightBaRron1412/DeepParse` (97.6% PA, 100×).
+6. LUNAR — Huang et al., *No More Labelled Examples?* ACM 2025-06 `doi:10.1145/3729377`.
+7. Parse-LLM — *Prior-Free LLM Parser*, CIKM 2024 `doi:10.1145/3746252.3761363`.
+8. LLM-SrcLog — `arxiv:2512.04474` — 1000× faster than per-line.
+9. Drain — He et al., IEEE ICWS 2017.
+10. Vector 0.40 WASM 2.0 — Johal 2026-05-03 `johal.in` — 1.2M/sec/vCPU 400μs.
+11. Wasm-bpf — `arxiv:2408.04856v1` & `eunomia-bpf/wasm-bpf`.
+12. Fluent Bit WASM — Chronosphere 2024-09-05.
+13. Loki 3.0 + Fluent Bit 3.0 — Johal 2026-04-29 — 10.2GB/s 68% save.
+14. LogHub 2.0 — `logpai/loghub`.
+15. Vendor Docs — FortiOS 7.4 Log Ref, Palo Alto CEF, Cisco ASA Syslog.
+16. SecBPMN2 Hybrid — Islam et al., *Hybrid LLM-Based Framework...*, `arxiv:2608.14370v1` — hybrid philosophy (BPMN domain, not log parsing, cited as related).
+17. IEEE Lightweight Hybrid — *Lightweight Hybrid Framework for Semantic Normalization of Security Events*, IEEE Euromicro `11626222` — supports lightweight hybrid beats heavy transformer (title only, paywalled).
+18. LogBERT — Guo et al., *Log Anomaly Detection via BERT*, IJCNN 2021 `10.1109/ijcnn52387.2021.9534113`; ADALog hybrid 2025 — downstream option, not core parser.
