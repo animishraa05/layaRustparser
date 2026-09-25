@@ -1,0 +1,12 @@
+FIREWALL connection 1001 protocol TCP action ALLOW src 192.168.1.10 dst 10.0.0.1
+FIREWALL connection 1002 protocol TCP action ALLOW src 192.168.1.20 dst 10.0.0.2
+FIREWALL connection 1003 protocol TCP action DENY src 192.168.1.30 dst 10.0.0.3
+FIREWALL connection 1004 protocol TCP action DENY src 192.168.1.40 dst 10.0.0.4
+devname="FGT-EDGE" type="traffic" srcip=10.10.1.5 srcport=51122 dstip=93.184.216.34 dstport=443 action="accept" sessionid=1000230 policyid=12
+devname="FGT-EDGE" type="traffic" srcip=10.10.1.6 srcport=51124 dstip=93.184.216.34 dstport=443 action="accept" sessionid=1000231 policyid=12
+devname="FGT-EDGE" type="traffic" srcip=10.10.1.7 srcport=51126 dstip=93.184.216.34 dstport=443 action="deny" sessionid=1000232 policyid=12
+devname="FGT-EDGE" type="traffic" srcip=10.10.1.8 srcport=51128 dstip=93.184.216.34 dstport=443 action="deny" sessionid=1000233 policyid=12
+IDS signature 3001 action PASS src 10.20.1.5 dst 10.20.2.9 proto UDP
+IDS signature 3002 action PASS src 10.20.1.6 dst 10.20.2.9 proto UDP
+IDS signature 3003 action REJECT src 10.20.1.7 dst 10.20.2.9 proto UDP
+IDS signature 3004 action REJECT src 10.20.1.8 dst 10.20.2.9 proto UDP

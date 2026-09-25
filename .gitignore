@@ -12,6 +12,7 @@
 # corpus subdirs (sidecars `.jsonl` are unaffected by any rule).
 !data/raw/adversarial/*.log
 !data/raw/holdout/*.log
+!data/raw/duel/*.log
 audit*_dump.jsonl
 # Full end-to-end dataset (generated on demand via --full; never committed)
 data/raw/full/
