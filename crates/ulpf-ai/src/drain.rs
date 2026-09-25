@@ -25,6 +25,18 @@ pub struct DrainConfig {
     /// Unique event anchor tokens that must NEVER be merged into a wildcard `<*>`
     /// If an anchor token differs between two logs, a distinct cluster is forced (DrainDotNet innovation)
     pub unique_anchor_tokens: Vec<String>,
+    /// Master switch for the whole anchor subsystem: anchor vocabulary,
+    /// syslog-tag homogeneity (P6.1) and the key-aware class partition
+    /// (P7.2). `false` = stock Drain3 matching — the literature baseline the
+    /// scorecard duel grades against. Defaults to `true`; serde default keeps
+    /// configs written before this field loading as anchored.
+    #[serde(default = "default_anchors_enabled")]
+    pub anchors_enabled: bool,
+}
+
+/// Anchored-by-default for configs predating the duel toggle.
+fn default_anchors_enabled() -> bool {
+    true
 }
 
 impl Default for DrainConfig {
@@ -66,6 +78,7 @@ impl Default for DrainConfig {
                 "TRAFFIC".into(),
                 "THREAT".into(),
             ],
+            anchors_enabled: true,
         }
     }
 }
@@ -416,6 +429,15 @@ impl DrainMiner {
         tokens: &[String],
         syslog_tag: &Option<String>,
     ) -> (Option<usize>, f64) {
+        // Duel toggle: anchors off = stock Drain3 matching (no tag
+        // homogeneity, no anchor vocab, no class partition). One bool read
+        // per lookup; the branch is perfectly predicted in steady state.
+        let anchors_on = self.config.anchors_enabled;
+        let anchor_vocab: &[String] = if anchors_on {
+            &self.config.unique_anchor_tokens
+        } else {
+            &[]
+        };
         let token_count = tokens.len();
         let len_key = token_count.to_string();
 
@@ -457,14 +479,10 @@ impl DrainMiner {
                     continue;
                 }
                 // P6.1: message-code anchor — strict tag homogeneity.
-                if &cluster.syslog_tag != syslog_tag {
+                if anchors_on && &cluster.syslog_tag != syslog_tag {
                     continue;
                 }
-                let sim = Self::compute_similarity(
-                    &cluster.template_tokens,
-                    tokens,
-                    &self.config.unique_anchor_tokens,
-                );
+                let sim = Self::compute_similarity(&cluster.template_tokens, tokens, anchor_vocab);
                 if sim > max_sim {
                     max_sim = sim;
                     if sim >= self.config.similarity_threshold {
@@ -532,6 +550,8 @@ impl DrainMiner {
             return 0.0;
         }
 
+        // Empty list = anchor subsystem off (vanilla baseline): this block
+        // holds BOTH the vocabulary check and the P7.2 class partition.
         if !anchor_tokens.is_empty() {
             for (t1, t2) in tmpl_tokens.iter().zip(in_tokens.iter()) {
                 let v1 = Self::anchor_value(t1);

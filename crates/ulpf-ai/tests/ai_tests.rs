@@ -1406,3 +1406,81 @@ fn test_holdout_novelty_end_to_end_at_freeze() {
         "novel formats must traverse the pipeline without crashing"
     );
 }
+
+// ============================================================================
+// DUEL BASELINE — `anchors_enabled: false` MUST reproduce stock Drain
+// ============================================================================
+// The scorecard duel grades vanilla Drain (literature baseline) against the
+// 3-tier pipeline on the same tokenizer; the ONLY intended difference is the
+// anchor subsystem. Disabling it must turn off all three ULPF hooks —
+// anchor vocabulary, syslog-tag homogeneity (P6.1) and the key-aware class
+// partition (P7.2) — so the baseline merges what stock Drain would merge.
+// Each pair below is shaped to differ ONLY in the hook under test.
+#[test]
+fn test_drain_anchors_enabled_toggle() {
+    let vanilla_cfg = DrainConfig {
+        anchors_enabled: false,
+        ..Default::default()
+    };
+
+    // Hook 1: anchor vocabulary (bare ALLOW/DENY verbs, ~91% token overlap).
+    let allow = "FIREWALL connection 1001 protocol TCP action ALLOW src 192.168.1.10 dst 10.0.0.1";
+    let deny = "FIREWALL connection 1002 protocol TCP action DENY src 192.168.1.20 dst 10.0.0.2";
+    let mut vanilla = DrainMiner::new(vanilla_cfg.clone());
+    let v1 = vanilla.add_log(allow);
+    let v2 = vanilla.add_log(deny);
+    assert_eq!(
+        v1.cluster_id, v2.cluster_id,
+        "vanilla (anchors off) must merge the near-identical ALLOW/DENY pair"
+    );
+    let mut anchored = DrainMiner::new(DrainConfig::default());
+    let a1 = anchored.add_log(allow);
+    let a2 = anchored.add_log(deny);
+    assert_ne!(
+        a1.cluster_id, a2.cluster_id,
+        "default config must still split ALLOW/DENY (invariant #3)"
+    );
+
+    // Hook 2: syslog-tag homogeneity (P6.1) — identical body, different
+    // `%ASA-6-*` message code; no anchor-vocab word differs on either side,
+    // so only the tag check can split the default config.
+    let built =
+        "<166>Sep 24 10:00:00 cisco-asa %ASA-6-302013: connection from 198.51.100.7 to 10.1.2.3";
+    let reset =
+        "<166>Sep 24 10:00:00 cisco-asa %ASA-6-302015: connection from 198.51.100.7 to 10.1.2.3";
+    let mut vanilla = DrainMiner::new(vanilla_cfg.clone());
+    let v1 = vanilla.add_log(built);
+    let v2 = vanilla.add_log(reset);
+    assert_eq!(
+        v1.cluster_id, v2.cluster_id,
+        "vanilla has no tag homogeneity: differing message codes may merge"
+    );
+    let mut anchored = DrainMiner::new(DrainConfig::default());
+    let a1 = anchored.add_log(built);
+    let a2 = anchored.add_log(reset);
+    assert_ne!(
+        a1.cluster_id, a2.cluster_id,
+        "default config must keep clusters syslog-tag-homogeneous"
+    );
+
+    // Hook 3: key-aware class partition (P7.2) — same `type=` key, values
+    // outside the anchor vocabulary (forward vs proxy), everything else equal.
+    // The kv pair sits past the 2-token prefix path so both lines reach the
+    // same leaf; only the class rule can split them.
+    let traffic = r#"devid="FGT9" direction inbound type="forward" srcip=10.0.0.1 dstip=10.0.0.2"#;
+    let proxy = r#"devid="FGT9" direction inbound type="proxy" srcip=10.0.0.1 dstip=10.0.0.2"#;
+    let mut vanilla = DrainMiner::new(vanilla_cfg);
+    let v1 = vanilla.add_log(traffic);
+    let v2 = vanilla.add_log(proxy);
+    assert_eq!(
+        v1.cluster_id, v2.cluster_id,
+        "vanilla ignores key=value class discriminators"
+    );
+    let mut anchored = DrainMiner::new(DrainConfig::default());
+    let a1 = anchored.add_log(traffic);
+    let a2 = anchored.add_log(proxy);
+    assert_ne!(
+        a1.cluster_id, a2.cluster_id,
+        "default config must split same-key/different-value class tokens"
+    );
+}
