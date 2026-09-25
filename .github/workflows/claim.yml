@@ -1,0 +1,56 @@
+name: Claim
+
+# Self-serve issues: comment `/claim` to take an unassigned issue,
+# `/unclaim` to release it. No roster needed — the commenter is assigned.
+# NOTE: this workflow only runs from the default branch.
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  issues: write
+
+jobs:
+  claim:
+    if: ${{ !github.event.issue.pull_request && (startsWith(github.event.comment.body, '/claim') || startsWith(github.event.comment.body, '/unclaim')) }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const issue_number = context.payload.issue.number;
+            const commenter = context.payload.comment.user.login;
+            const body = context.payload.comment.body.trim();
+            const assignees = context.payload.issue.assignees.map(a => a.login);
+
+            const setStatus = async (from, to) => {
+              try { await github.rest.issues.removeLabel({ owner, repo, issue_number, name: from }); } catch (e) {}
+              try { await github.rest.issues.addLabels({ owner, repo, issue_number, labels: [to] }); } catch (e) {}
+            };
+            const reply = (msg) => github.rest.issues.createComment({ owner, repo, issue_number, body: msg });
+
+            if (body.startsWith('/unclaim')) {
+              if (!assignees.includes(commenter)) {
+                await reply(`@${commenter} you are not assigned to this issue — nothing to release.`);
+                return;
+              }
+              await github.rest.issues.removeAssignees({ owner, repo, issue_number, assignees: [commenter] });
+              await setStatus('status: claimed', 'status: unclaimed');
+              await reply(`@${commenter} released. This issue is up for grabs again — comment \`/claim\` to take it.`);
+              return;
+            }
+
+            // /claim
+            if (assignees.length > 0 && !assignees.includes(commenter)) {
+              await reply(`@${commenter} already claimed by @${assignees[0]}. Pick another \`status: unclaimed\` issue, or ask them to \`/unclaim\`.`);
+              return;
+            }
+            if (assignees.includes(commenter)) {
+              await reply(`@${commenter} you already hold this issue. Work branch: \`feat/${issue_number}-<slug>\`, then open a PR.`);
+              return;
+            }
+            await github.rest.issues.addAssignees({ owner, repo, issue_number, assignees: [commenter] });
+            await setStatus('status: unclaimed', 'status: claimed');
+            await reply(`@${commenter} claimed ✅\n\nWork on \`feat/${issue_number}-<slug>\` and open a PR against \`master\`. CI + CodeRabbit will review first, then a human. Stuck > 1 day? Comment here or \`/unclaim\` to release.`);

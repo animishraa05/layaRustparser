@@ -1,0 +1,44 @@
+name: Review routing
+
+# No hardcoded roster: new PRs get `needs-reviewer`, removed once any
+# human review is submitted. CODEOWNERS still auto-pings
+# @animishraa05 @sudobhavik on every PR.
+
+on:
+  pull_request_target:
+    types: [opened, reopened, ready_for_review]
+  pull_request_review:
+    types: [submitted]
+
+permissions:
+  pull-requests: write
+
+jobs:
+  needs-reviewer:
+    if: ${{ github.event_name == 'pull_request_target' && !github.event.pull_request.draft }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.issues.addLabels({
+              ...context.repo,
+              issue_number: context.payload.pull_request.number,
+              labels: ['needs-reviewer'],
+            });
+
+  reviewed:
+    if: ${{ github.event_name == 'pull_request_review' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            // Any submitted review (approve / changes / comment) clears the flag.
+            try {
+              await github.rest.issues.removeLabel({
+                ...context.repo,
+                issue_number: context.payload.pull_request.number,
+                name: 'needs-reviewer',
+              });
+            } catch (e) {}

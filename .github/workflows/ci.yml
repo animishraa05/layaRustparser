@@ -1,0 +1,23 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+      # NOTE: the two -A flags are required. Plain `-D warnings` fails on
+      # `field_reassign_with_default` (ulpf-core) and `too_many_arguments`.
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -A clippy::too_many_arguments -A clippy::field_reassign_with_default -D warnings
+      - name: Format
+        run: cargo fmt --all -- --check
+      - name: Tests
+        run: cargo test --workspace
