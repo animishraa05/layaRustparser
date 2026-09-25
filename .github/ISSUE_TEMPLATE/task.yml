@@ -1,0 +1,50 @@
+name: Task
+description: A unit of remaining work (claim with /claim)
+title: "[area] short headline"
+labels: ["status: unclaimed"]
+body:
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - ingest/queue
+        - integrity/storage
+        - ai/accuracy
+        - api
+        - frontend
+        - perf/generator
+        - docs/demo
+    validations:
+      required: true
+  - type: dropdown
+    id: size
+    attributes:
+      label: Size
+      options:
+        - S (< 1 day)
+        - M (1-2 days)
+        - L (split me)
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Context / why
+      description: What is broken or missing, and why it matters
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope (exact files)
+      description: Files to touch; what is explicitly out of scope
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: Checkable conditions for done
+    validations:
+      required: true

@@ -3,13 +3,16 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+    image: ulpf:0.1.0
     container_name: ulpf-engine
     ports:
       - "5140:5140/udp"
       - "5140:5140/tcp"
+    # Mount the whole data dir (not the ledger file directly): if the host
+    # file is missing, Docker would create a directory at its path instead.
+    # Host dir must be writable by UID 1000 (see Dockerfile note).
     volumes:
-      - ./data/parquet:/opt/ulpf/data/parquet
-      - ./data/ledger.jsonl:/opt/ulpf/data/ledger.jsonl
+      - ./data:/opt/ulpf/data
     environment:
       - RUST_LOG=info
     restart: unless-stopped

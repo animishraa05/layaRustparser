@@ -1,0 +1,28 @@
+# CodeRabbit config (free OSS plan). Bot reviews are advisory —
+# humans approve. Branch ruleset requires 1 human approval + green CI.
+language: "en-US"
+tone_instructions: "Be direct and terse. No fluff, no praise. Disagree when the code is wrong."
+reviews:
+  profile: "chill"
+  high_level_summary: true
+  collapse_walkthrough: false
+  poem: false
+  commit_status: true
+  auto_review:
+    enabled: true
+    auto_incremental_review: true
+  # Non-negotiable repo invariants — flag any PR that breaks these.
+  path_instructions:
+    - path: "crates/ulpf-core/src/parser/**"
+      instructions: >
+        Hot path: no to_string()/format!/String::from per packet, no runtime
+        network calls, preserve raw log bytes exactly. Performance gates:
+        p50 < 5.0us, LRU hit rate > 90%.
+    - path: "crates/ulpf-ai/src/drain.rs"
+      instructions: >
+        Security actions (ALLOW/PERMIT/ACCEPT vs DENY/DROP/BLOCK/REJECT) must
+        never merge into one cluster. Anchor-token logic is inviolable.
+    - path: "crates/ulpf-integrity/**"
+      instructions: >
+        raw_log preserved byte-for-byte, raw_hash = SHA-256(raw), UUIDv7 IDs.
+        Never truncate or re-encode raw input.

@@ -7,7 +7,8 @@
 [![Integrity](https://img.shields.io/badge/integrity-RFC%206962%20Merkle-purple.svg)](https://datatracker.ietf.org/doc/html/rfc6962)
 [![Air--Gap](https://img.shields.io/badge/deployment-100%25%20Air--Gapped-red.svg)](#air-gapped-deployment)
 [![Size](https://img.shields.io/badge/binary-18.6%20MB%20%3C%2035%20MB%20req-orange.svg)](#sih26156-requirements-matrix)
-[![Repo](https://img.shields.io/badge/github-animishraa05%2FlayaRustparser-blue.svg)](https://github.com/animishraa05/layaRustparser)
+[![Repo](https://img.shields.io/badge/github-guptchar%2FlayaRustparser-blue.svg)](https://github.com/guptchar/layaRustparser)
+[![CI](https://github.com/guptchar/layaRustparser/actions/workflows/ci.yml/badge.svg)](https://github.com/guptchar/layaRustparser/actions/workflows/ci.yml)
 
 A high-performance, vendor-agnostic, containerized, strictly **air-gapped Universal Log Pre-processing Framework** written in **Rust**. ULPF ingests heterogeneous perimeter firewall logs, normalizes them into **OCSF 1.3 NetworkActivity (Class 4001)**, and cryptographically guarantees non-repudiation with **RFC 6962 Merkle trees** anchored into columnar **Apache Parquet WORM** storage — with every raw byte preserved, hash-for-hash, forever.
 
@@ -67,7 +68,7 @@ Full argument, shipper-by-shipper comparison, the [vendor support matrix](docs/W
 ## Reproduce the proof
 
 ```bash
-git clone git@github.com:animishraa05/layaRustparser.git && cd layaRustparser
+git clone git@github.com:guptchar/layaRustparser.git && cd layaRustparser
 cargo build --release
 
 # Accuracy scorecards — regenerates the non-frozen committed reports in ~90s

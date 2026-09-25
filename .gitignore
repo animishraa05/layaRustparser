@@ -30,3 +30,10 @@ __pycache__/
 # viewer's fonts and renders as Symbol-font Greek where Helvetica is missing).
 # .dot sources are the truth; regenerate with `dot -Tpng -Gdpi=144`.
 docs/diagrams/*.svg
+
+# Local agent / IDE state (never committed)
+.opencode/
+.idea/
+.vscode/
+*.orig
+*.rej

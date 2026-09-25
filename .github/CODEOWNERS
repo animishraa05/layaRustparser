@@ -1,0 +1,4 @@
+# Default reviewers for every PR. Individuals always work; the team
+# entry resolves once @guptchar/reviewers exists (unknown owners are
+# skipped, valid ones still get requested).
+* @animishraa05 @sudobhavik @guptchar/reviewers

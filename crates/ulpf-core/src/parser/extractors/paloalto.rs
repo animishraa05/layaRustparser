@@ -117,8 +117,15 @@ impl PaloAltoExtractor {
             }
         };
 
-        let src_endpoint = Endpoint::new(src_ip, src_port, in_iface, src_zone);
-        let dst_endpoint = Endpoint::new(dst_ip, dst_port, out_iface, dst_zone);
+        let mut final_src_port = src_port;
+        let mut final_dst_port = dst_port;
+        if proto_name.as_deref() == Some("ICMP") || proto_num == Some(1) {
+            final_src_port = None;
+            final_dst_port = None;
+        }
+
+        let src_endpoint = Endpoint::new(src_ip, final_src_port, in_iface, src_zone);
+        let dst_endpoint = Endpoint::new(dst_ip, final_dst_port, out_iface, dst_zone);
         let connection_info = ConnectionInfo::new(proto_num, proto_name, None);
 
         let traffic = if bytes_sent.is_some() || bytes_rcvd.is_some() || packets.is_some() {

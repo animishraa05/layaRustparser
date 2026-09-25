@@ -1,0 +1,24 @@
+name: Bug
+description: Something in the working core broke
+title: "[bug] short headline"
+labels: ["bug"]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What broke
+      description: Command run, expected vs actual output
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Reproduction
+      description: Exact commands (release binary, cwd = repo root)
+    validations:
+      required: true
+  - type: input
+    id: commit
+    attributes:
+      label: Commit / branch
+      description: Short SHA or branch where it reproduces

@@ -67,6 +67,6 @@
 #### SIH Deliverables Checklist:
 * [x] **Source Code:** Complete modular Rust workspace with zero compiler warnings.
 * [x] **Setup Documentation:** `README.md` with 1-command Docker and local setup.
-* [x] **Architecture Document:** 2-Page technical specification in `docs/ARCHITECTURE.md`.
+* [x] **Architecture Document:** subsystem-by-subsystem improvement walkthrough in `docs/ARCHITECTURE_FINAL.md`.
 * [x] **Demo Video:** 2-minute automated terminal script in `scripts/run_demo.sh`.
 * [x] **Slide Deck:** 5-slide technical pitch in `docs/PRESENTATION.md`.

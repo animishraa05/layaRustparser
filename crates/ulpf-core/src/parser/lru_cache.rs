@@ -135,7 +135,9 @@ impl SignatureLruCache {
 
         let mut hasher = FxHasher64::default();
 
-        if let Some(pos) = window.find("%ASA-") {
+        if window.contains("CEF:") {
+            hasher.write(b"cef_format");
+        } else if let Some(pos) = window.find("%ASA-") {
             // Hash the ASA message tag (e.g. %ASA-6-302013)
             let tag_slice = &window[pos..window.len().min(pos + 16)];
             hasher.write(tag_slice.as_bytes());

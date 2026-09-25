@@ -181,6 +181,11 @@ impl FortigateExtractor {
             _ => (disposition::UNKNOWN, activity_id::TRAFFIC_FLOW),
         };
 
+        if proto_num == Some(1) {
+            src_port = None;
+            dst_port = None;
+        }
+
         let src_endpoint = Endpoint::new(src_ip, src_port, src_intf, src_zone);
         let dst_endpoint = Endpoint::new(dst_ip, dst_port, dst_intf, dst_zone);
         let connection_info = ConnectionInfo::new(proto_num, proto_name, None);

@@ -1,0 +1,12 @@
+# Keep the Docker build context small: never ship build artefacts,
+# VCS metadata, or local tooling into the image.
+target/
+.git/
+.github/
+.opencode/
+.idea/
+.vscode/
+eval_hardcore_report.md
+remainingStuff.md
+*.orig
+*.rej
