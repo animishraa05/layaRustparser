@@ -396,6 +396,104 @@ fn scorecard_end_to_end_prints_box_and_writes_report() {
         "re-run hint missing:\n{stdout}"
     );
     assert!(report.exists(), "markdown report must be written");
+    // Duel absent (no fixtures under data_dir/duel): header still prints,
+    // one plain skip line, no verdict — never a hollow table.
+    assert!(
+        stdout.contains("DUEL - VANILLA DRAIN vs 3-TIER"),
+        "duel header must print even when skipped:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("duel skipped"),
+        "plain skip line missing:\n{stdout}"
+    );
+    assert!(
+        !stdout.contains("Duel:"),
+        "no duel verdict without fixtures:\n{stdout}"
+    );
+
+    std::fs::remove_dir_all(&tmp).ok();
+}
+
+/// Duel end-to-end: with probe fixtures in `<data-dir>/duel/` the scorecard
+/// renders the per-round comparison rows, adds the verdict line, and writes
+/// `eval_duel_report.md` beside `--out`.
+#[test]
+fn scorecard_duel_section_runs_when_fixtures_present() {
+    let tmp = std::env::temp_dir().join(format!(
+        "ulpf_duel_e2e_{}_{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(tmp.join("duel")).unwrap();
+    std::fs::write(
+        tmp.join("demo.log"),
+        "<134>Sep 24 10:00:00 cisco-asa %ASA-6-302013: Built inbound TCP connection 1 for outside:198.51.100.7/443 (198.51.100.7/443) to inside:10.1.2.3/51514 (10.1.2.3/51514)\n",
+    )
+    .unwrap();
+
+    // Minimal duel input: the 12-line probe + its GT (other rounds are
+    // optional in run_duel; R1 alone must still render).
+    let fixtures = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data/raw/duel");
+    std::fs::copy(
+        fixtures.join("security_probe.log"),
+        tmp.join("duel/security_probe.log"),
+    )
+    .expect("copy probe log");
+    std::fs::copy(
+        fixtures.join("security_probe.gt.jsonl"),
+        tmp.join("duel/security_probe.gt.jsonl"),
+    )
+    .expect("copy probe GT");
+
+    let report = tmp.join("scorecard_report.md");
+    let out = Command::new(bin())
+        .args([
+            "scorecard",
+            "--duration",
+            "1",
+            "--threads",
+            "1",
+            "--samples",
+            "10",
+            "--corpus",
+            "core",
+            "--data-dir",
+            tmp.to_str().unwrap(),
+            "--out",
+            report.to_str().unwrap(),
+        ])
+        .output()
+        .expect("spawn ulpf scorecard");
+
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "scorecard failed (exit {:?}): {}",
+        out.status.code(),
+        stdout
+    );
+    assert!(
+        stdout.contains("R1 probe clusters"),
+        "duel round rows missing:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("Duel: 3-tier 1/1 GA rounds won (vanilla 0/1, 0 ties)"),
+        "duel verdict line missing:\n{stdout}"
+    );
+
+    // Markdown duel report lands beside --out, only when the duel ran.
+    let duel_md = tmp.join("eval_duel_report.md");
+    assert!(
+        duel_md.exists(),
+        "eval_duel_report.md must be written next to --out"
+    );
+    let md = std::fs::read_to_string(&duel_md).unwrap();
+    assert!(md.contains("R1 probe"), "duel report rounds:\n{md}");
+    assert!(md.contains("anchors_enabled"), "engine disclosure:\n{md}");
 
     std::fs::remove_dir_all(&tmp).ok();
 }

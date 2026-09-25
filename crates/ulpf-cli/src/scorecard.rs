@@ -15,6 +15,7 @@
 //!   corpora are reported as `TRACKED`, matching README section 14, not FAIL).
 //! - The verdict block prints the report path and the exact re-run command.
 
+use ulpf_ai::duel::DuelReport;
 use ulpf_ai::evaluator::{BenchmarkTierResult, EvaluationReport};
 
 /// Total box width in columns (matches the width judges know from the
@@ -30,8 +31,10 @@ const W_DELTA: usize = 13;
 /// Render the full scorecard box for a dual-engine evaluation report.
 ///
 /// `report_path` is echoed in the verdict so a screenshot carries the
-/// pointer to the committed markdown evidence.
-pub fn render(report: &EvaluationReport, report_path: &str) -> String {
+/// pointer to the committed markdown evidence. `duel` is the vanilla-vs-3-tier
+/// comparison (`None` when its fixtures are absent — the section header still
+/// prints so a screenshot never hides a skipped measurement).
+pub fn render(report: &EvaluationReport, duel: Option<&DuelReport>, report_path: &str) -> String {
     let (Some(b), Some(t)) = (&report.baseline, &report.tiered_pipeline) else {
         let mut out = String::new();
         out.push_str(&rule('='));
@@ -281,6 +284,10 @@ pub fn render(report: &EvaluationReport, report_path: &str) -> String {
     }
     out.push_str(&rule('-'));
 
+    // --- Duel: vanilla Drain vs the 3-tier pipeline ----------------------
+    out.push_str(&duel_section(duel));
+    out.push_str(&rule('-'));
+
     // --- Gates -----------------------------------------------------------
     out.push_str(&section_named(
         "GATE CHECKS",
@@ -329,6 +336,9 @@ pub fn render(report: &EvaluationReport, report_path: &str) -> String {
     }
     out.push_str(&tally);
     out.push('\n');
+    if let Some(d) = duel {
+        out.push_str(&duel_verdict(d));
+    }
     out.push_str(&format!("  Report: {report_path}\n"));
     out.push_str(&format!(
         "  Re-run: ./target/release/ulpf scorecard --corpus {}\n",
@@ -523,9 +533,135 @@ fn compression(tiered: u64, baseline: u64) -> String {
     }
 }
 
+/// Count delta for rows where lower is better (mixed-action clusters),
+/// read as 3-tier relative to vanilla: `3 fewer` / `2 more` / `=`.
+fn count_delta(vanilla: usize, tiered: usize) -> String {
+    if vanilla == tiered {
+        "=".to_string()
+    } else if tiered < vanilla {
+        format!("{} fewer", vanilla - tiered)
+    } else {
+        format!("{} more", tiered - vanilla)
+    }
+}
+
+/// Vanilla-vs-3-tier comparison block.
+///
+/// The header prints unconditionally so a screenshot never hides a skipped
+/// run; rows require `Some` (absent fixtures show one plain skip line, never
+/// a hollow table). A round whose GT cannot grade a metric (tag-level
+/// sidecars) reports a plain note instead of a half-empty row, so no `n/a`
+/// cell ever passes for a measurement.
+fn duel_section(duel: Option<&DuelReport>) -> String {
+    let mut out = String::new();
+    out.push_str(&section_named(
+        "DUEL - VANILLA DRAIN vs 3-TIER",
+        "VANILLA DRAIN",
+        "3-TIER PIPELINE",
+        "DELTA",
+    ));
+    let Some(d) = duel else {
+        out.push_str("  (duel skipped - no usable duel fixtures under <data-dir>/duel/)\n");
+        return out;
+    };
+    for r in &d.rounds {
+        out.push_str(&row(
+            &format!("{} clusters", r.name),
+            &commas(r.vanilla.clusters as u64),
+            &commas(r.tiered.clusters as u64),
+            &format!("GT {}", commas(r.gt_classes as u64)),
+        ));
+        out.push_str(&row(
+            &format!("{} grouping accuracy (GA)", r.name),
+            &pct(r.vanilla.grouping_accuracy_pct),
+            &pct(r.tiered.grouping_accuracy_pct),
+            &pt_delta(
+                r.vanilla.grouping_accuracy_pct,
+                r.tiered.grouping_accuracy_pct,
+            ),
+        ));
+        // PA / FTA need template-level GT on BOTH sides; tag-level sidecars
+        // (R2) get a plain note rather than a fabricated cell.
+        if let (Some(vp), Some(tp)) = (
+            r.vanilla.parsing_accuracy_pct,
+            r.tiered.parsing_accuracy_pct,
+        ) {
+            out.push_str(&row(
+                &format!("{} parsing accuracy (PA)", r.name),
+                &pct(vp),
+                &pct(tp),
+                &pt_delta(vp, tp),
+            ));
+            if let (Some(vf), Some(tf)) = (r.vanilla.template_f1_pct, r.tiered.template_f1_pct) {
+                out.push_str(&row(
+                    &format!("{} template F1 (FTA)", r.name),
+                    &pct(vf),
+                    &pct(tf),
+                    &pt_delta(vf, tf),
+                ));
+            }
+        } else {
+            out.push_str(&format!(
+                "  {}: PA/FTA n/a (sidecar GT is tag-level, not full templates)\n",
+                r.name
+            ));
+        }
+        // Clusters mixing allow/deny dispositions (lower is better).
+        match (r.vanilla.action_violations, r.tiered.action_violations) {
+            (Some(v), Some(t)) => out.push_str(&row(
+                &format!("{} mixed-action clusters", r.name),
+                &v.to_string(),
+                &t.to_string(),
+                &count_delta(v, t),
+            )),
+            _ => out.push_str(&format!(
+                "  {}: mixed-action n/a (corpus has no disposition ground truth)\n",
+                r.name
+            )),
+        }
+        // Capability/provenance: only the 3-tier pipeline stores raw lines
+        // and hashes; vanilla clustering is stateless — disclosed, never faked.
+        let held = r.tiered_lossless_ok == r.lines && r.tiered_panics == 0;
+        let capability = if r.tiered_panics == 0 {
+            format!("{}/{} ok", r.tiered_lossless_ok, r.lines)
+        } else {
+            format!(
+                "{}/{} ok, {} pan",
+                r.tiered_lossless_ok, r.lines, r.tiered_panics
+            )
+        };
+        out.push_str(&row(
+            &format!("{} 3-tier capability", r.name),
+            "n/a (no storage)",
+            &capability,
+            if held { "held" } else { "BREACH" },
+        ));
+    }
+    // GA rounds won: a tie is nobody's win.
+    let (tw, vw) = d.ga_wins();
+    let n = d.rounds.len();
+    out.push_str(&row(
+        &format!("GA rounds won (of {n})"),
+        &vw.to_string(),
+        &tw.to_string(),
+        &format!("3-tier {tw}-{vw}"),
+    ));
+    out
+}
+
+/// One-line duel verdict for the VERDICT block; only printed when the duel
+/// actually ran.
+fn duel_verdict(duel: &DuelReport) -> String {
+    let (tw, vw) = duel.ga_wins();
+    let n = duel.rounds.len();
+    let ties = n.saturating_sub(tw + vw);
+    format!("  Duel: 3-tier {tw}/{n} GA rounds won (vanilla {vw}/{n}, {ties} ties)\n")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ulpf_ai::duel::{DuelRound, EngineDuelScore};
     use ulpf_ai::evaluator::{
         AccuracyAuditSummary, BenchmarkTierResult, HardwareThroughputSummary, LatencySummary,
         RobustnessSummary, TierDiagnosticsSummary,
@@ -667,7 +803,7 @@ mod tests {
 
     #[test]
     fn renders_nonempty_ascii_only_box() {
-        let out = render(&sample_report(), "scorecard_report.md");
+        let out = render(&sample_report(), None, "scorecard_report.md");
         assert!(!out.is_empty(), "render must produce output");
         for ch in out.chars() {
             assert!(
@@ -683,7 +819,7 @@ mod tests {
 
     #[test]
     fn latency_and_throughput_deltas_computed() {
-        let out = render(&sample_report(), "scorecard_report.md");
+        let out = render(&sample_report(), None, "scorecard_report.md");
         assert!(
             out.contains("-96.2%"),
             "p50 79.23 -> 3.02 must show -96.2%:\n{out}"
@@ -700,7 +836,7 @@ mod tests {
 
     #[test]
     fn every_table_row_has_fixed_column_widths() {
-        let out = render(&sample_report(), "scorecard_report.md");
+        let out = render(&sample_report(), None, "scorecard_report.md");
         let mut rows = 0;
         for line in out.lines().filter(|l| l.contains(" | ")) {
             rows += 1;
@@ -716,7 +852,7 @@ mod tests {
 
     #[test]
     fn healthy_report_passes_all_gates() {
-        let out = render(&sample_report(), "scorecard_report.md");
+        let out = render(&sample_report(), None, "scorecard_report.md");
         assert!(out.contains("GATE CHECKS"), "gates section missing:\n{out}");
         assert!(
             !out.contains("FAIL"),
@@ -736,7 +872,7 @@ mod tests {
             .unwrap()
             .accuracy
             .action_inviolability_pct = 99.0;
-        let out = render(&r, "scorecard_report.md");
+        let out = render(&r, None, "scorecard_report.md");
         assert!(
             out.contains("FAIL"),
             "broken inviolability must FAIL:\n{out}"
@@ -752,7 +888,7 @@ mod tests {
         let mut r = sample_report();
         r.corpus_kind = "full".to_string();
         r.tiered_pipeline.as_mut().unwrap().latency.p50_micros = 7.28;
-        let out = render(&r, "scorecard_report.md");
+        let out = render(&r, None, "scorecard_report.md");
         assert!(
             out.contains("TRACKED"),
             "non-core over-gate is tracked (README 14):\n{out}"
@@ -762,7 +898,7 @@ mod tests {
 
     #[test]
     fn verdict_carries_headlines_report_path_and_rerun_hint() {
-        let out = render(&sample_report(), "my_report.md");
+        let out = render(&sample_report(), None, "my_report.md");
         assert!(out.contains("VERDICT"), "verdict block missing:\n{out}");
         assert!(out.contains("VCA 100.00%"), "VCA headline:\n{out}");
         assert!(out.contains("GA 96.41%"), "GA headline:\n{out}");
@@ -779,7 +915,7 @@ mod tests {
 
     #[test]
     fn no_line_exceeds_the_box_width() {
-        let out = render(&sample_report(), "scorecard_report.md");
+        let out = render(&sample_report(), None, "scorecard_report.md");
         for line in out.lines() {
             assert!(
                 line.chars().count() <= W,
@@ -793,10 +929,165 @@ mod tests {
     fn missing_engine_renders_incomplete_instead_of_panicking() {
         let mut r = sample_report();
         r.tiered_pipeline = None;
-        let out = render(&r, "scorecard_report.md");
+        let out = render(&r, None, "scorecard_report.md");
         assert!(
             out.contains("INCOMPLETE"),
             "missing engine must render an incomplete notice:\n{out}"
+        );
+    }
+
+    // --- Duel section (vanilla Drain vs 3-tier) ---------------------------
+
+    /// One engine's per-round score.
+    fn score(
+        clusters: usize,
+        ga: f64,
+        pa: Option<f64>,
+        fta: Option<f64>,
+        violations: Option<usize>,
+    ) -> EngineDuelScore {
+        EngineDuelScore {
+            clusters,
+            grouping_accuracy_pct: ga,
+            parsing_accuracy_pct: pa,
+            template_f1_pct: fta,
+            action_violations: violations,
+        }
+    }
+
+    /// Two rounds: R1 grades everything, R2 is tag-level GT (PA/FTA absent) —
+    /// the two shapes the section must render.
+    fn sample_duel() -> DuelReport {
+        DuelReport {
+            rounds: vec![
+                DuelRound {
+                    name: "R1 probe".into(),
+                    lines: 12,
+                    gt_classes: 6,
+                    vanilla: score(3, 50.0, Some(50.0), Some(50.0), Some(3)),
+                    tiered: score(6, 100.0, Some(100.0), Some(100.0), Some(0)),
+                    tiered_panics: 0,
+                    tiered_lossless_ok: 12,
+                    note: None,
+                },
+                DuelRound {
+                    name: "R2 fuzzed".into(),
+                    lines: 757,
+                    gt_classes: 19,
+                    vanilla: score(41, 62.5, None, None, Some(17)),
+                    tiered: score(55, 71.25, None, None, Some(10)),
+                    tiered_panics: 0,
+                    tiered_lossless_ok: 757,
+                    note: None,
+                },
+            ],
+            tiered_lines: 769,
+            tiered_lossless_ok: 769,
+            tiered_panics: 0,
+        }
+    }
+
+    #[test]
+    fn duel_section_reports_rounds_when_present() {
+        let out = render(
+            &sample_report(),
+            Some(&sample_duel()),
+            "scorecard_report.md",
+        );
+
+        // Header always prints; per-round rows carry GT counts and values.
+        assert!(
+            out.contains("DUEL - VANILLA DRAIN vs 3-TIER"),
+            "header:\n{out}"
+        );
+        assert!(out.contains("R1 probe clusters"), "clusters row:\n{out}");
+        assert!(out.contains("GT 6"), "ground-truth column:\n{out}");
+        assert!(
+            out.contains("R1 probe grouping accuracy (GA)"),
+            "GA row:\n{out}"
+        );
+        assert!(
+            out.contains("R1 probe mixed-action clusters"),
+            "violability row:\n{out}"
+        );
+        // Vanilla stores nothing — provenance row discloses it instead of
+        // pretending a baseline hash exists.
+        assert!(out.contains("n/a (no storage)"), "provenance row:\n{out}");
+
+        // R2 has no template-level GT: PA/FTA reported as a PLAIN note line,
+        // never a half-empty table row.
+        let note = out
+            .lines()
+            .find(|l| l.contains("PA/FTA n/a"))
+            .expect("R2 absent-metric note");
+        assert!(!note.contains(" | "), "notes must be plain lines: {note:?}");
+
+        // Verdict line ties the duel together.
+        assert!(
+            out.contains("Duel: 3-tier 2/2 GA rounds won (vanilla 0/2, 0 ties)"),
+            "duel verdict:\n{out}"
+        );
+        // The six product gates are untouched by the duel section.
+        assert!(out.contains("Gates: 6/6 PASS"), "gates:\n{out}");
+    }
+
+    #[test]
+    fn duel_section_skips_cleanly_when_fixtures_absent() {
+        let out = render(&sample_report(), None, "scorecard_report.md");
+
+        // Header still prints (a screenshot never hides a skipped run), rows
+        // and verdict do not.
+        assert!(
+            out.contains("DUEL - VANILLA DRAIN vs 3-TIER"),
+            "header:\n{out}"
+        );
+        assert!(
+            !out.contains("R1 probe"),
+            "no rows without a report:\n{out}"
+        );
+        assert!(
+            !out.contains("Duel:"),
+            "no verdict without a report:\n{out}"
+        );
+        let skip = out
+            .lines()
+            .find(|l| l.contains("duel skipped"))
+            .expect("plain skip line");
+        assert!(!skip.contains(" | "), "skip line is plain: {skip:?}");
+        assert!(out.contains("Gates: 6/6 PASS"), "gates:\n{out}");
+    }
+
+    #[test]
+    fn duel_rows_keep_the_fixed_grid() {
+        let out = render(
+            &sample_report(),
+            Some(&sample_duel()),
+            "scorecard_report.md",
+        );
+        let mut rows = 0;
+        for line in out.lines().filter(|l| l.contains(" | ")) {
+            rows += 1;
+            let parts: Vec<&str> = line.split(" | ").collect();
+            assert_eq!(parts.len(), 4, "4 columns: {line:?}");
+            assert_eq!(parts[0].chars().count(), W_LABEL, "label pad: {line:?}");
+            assert_eq!(parts[1].chars().count(), W_VAL, "col1 pad: {line:?}");
+            assert_eq!(parts[2].chars().count(), W_VAL, "col2 pad: {line:?}");
+            assert_eq!(parts[3].chars().count(), W_DELTA, "delta pad: {line:?}");
+            assert!(
+                line.chars().count() <= W,
+                "width {} > {W}: {line:?}",
+                line.chars().count()
+            );
+            assert!(
+                line.chars().all(|c| c.is_ascii() || c == 'µ'),
+                "ASCII only (µs excepted): {line:?}"
+            );
+        }
+        // 2 rounds x (clusters + GA + PA + FTA + violations + provenance),
+        // minus R2's PA/FTA rows (reported as a note), plus header + won-row.
+        assert!(
+            rows >= 20,
+            "duel rows must be full-width table lines, got {rows}"
         );
     }
 }

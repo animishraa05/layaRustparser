@@ -1020,11 +1020,30 @@ fn run_scorecard(args: ScorecardArgs) -> Result<()> {
     );
     report.corpus_kind = args.corpus.as_str().to_string();
 
+    // Vanilla-vs-3-tier duel: best-effort. Absent fixtures skip it, an
+    // error is disclosed above the box — never fatal to the scorecard.
+    let duel = match ulpf_ai::duel::run_duel(&args.data_dir) {
+        Ok(d) => d,
+        Err(e) => {
+            println!("[!] Duel skipped: {e:#}");
+            None
+        }
+    };
+
     let out_path = args.out.display().to_string();
-    println!("{}", scorecard::render(&report, &out_path));
+    println!("{}", scorecard::render(&report, duel.as_ref(), &out_path));
 
     fs::write(&args.out, report.to_markdown())?;
     println!("[+] Markdown report saved to: {}", args.out.display());
+
+    // Committed duel evidence: deterministic markdown (no timestamps), so
+    // eval_duel_report.md stays diff-clean. Written beside --out, only
+    // when the duel actually ran.
+    if let Some(d) = &duel {
+        let duel_out = args.out.with_file_name("eval_duel_report.md");
+        fs::write(&duel_out, d.to_markdown())?;
+        println!("[+] Duel report saved to: {}", duel_out.display());
+    }
     Ok(())
 }
 
