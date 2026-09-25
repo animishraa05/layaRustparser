@@ -284,4 +284,15 @@ mod tests {
         let h2 = SignatureLruCache::compute_signature_hash(&raw);
         assert_eq!(h1, h2, "hashing must stay deterministic");
     }
+
+    #[test]
+    fn test_signature_hash_never_panics_on_multibyte_asa_tag_tail() {
+        // Tag "%ASA-6-302013" (13 bytes) + "AB" + '€' (bytes 15-17): the
+        // +16 tag cut lands INSIDE the euro sign. Covers the second
+        // floored cut in `compute_signature_hash` (CodeRabbit nitpick).
+        let raw = "%ASA-6-302013AB€ rest of an asa line for outside:1.1.1.1/53";
+        let h1 = SignatureLruCache::compute_signature_hash(raw);
+        let h2 = SignatureLruCache::compute_signature_hash(raw);
+        assert_eq!(h1, h2, "hashing must stay deterministic");
+    }
 }
