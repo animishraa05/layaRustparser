@@ -1,32 +1,32 @@
 // Theoretical proposal vs production reality - source for docs/SIMPLIFIED_EXPLANATION_AND_BENCHMARKS.md section 2.
 // Regenerate: dot -Tpng -Gdpi=144 docs/diagrams/proposal-vs-reality.dot -o docs/diagrams/proposal-vs-reality.png
-// Rule: ASCII-only label text (no unicode symbols - some renderers show tofu).
+// Label rule: ASCII-only, max 4 plain-English words, no sentences, no \n.
 digraph proposal_vs_reality {
   graph [rankdir=LR, bgcolor="white", pad="0.2", nodesep="0.35", ranksep="0.55", fontname="Helvetica"];
   node [shape="box", style="filled,rounded", fillcolor="#f6f8fa", color="#57606a", fontname="Helvetica", fontsize="13", margin="0.18,0.10"];
   edge [color="#57606a", fontname="Helvetica", fontsize="11", arrowsize="0.7"];
 
   subgraph cluster_theory {
-    label="Theoretical proposal (Ulpf -1.pdf)";
+    label="original proposal";
     labelloc="t"; style="rounded,filled"; fillcolor="#fff1f0"; color="#cf222e"; fontsize="13";
-    a1 [label="eBPF / XDP ingestion\n(bypasses Linux kernel)", fillcolor="#fff1f0", color="#cf222e"];
-    b1 [label="External Redpanda broker\n(heavy C++ queue)", fillcolor="#fff1f0", color="#cf222e"];
-    c1 [label="O(1) radix-tree parser\n(theoretical all-in-one)", fillcolor="#fff1f0", color="#cf222e"];
-    d1 [label="MiniLM + HDBSCAN\n(heavy AI embeddings)", fillcolor="#fff1f0", color="#cf222e"];
-    e1 [label="DeepSeek cloud LLM\n(external AI prompting)", fillcolor="#fff1f0", color="#cf222e"];
+    a1 [label="eBPF XDP ingestion", fillcolor="#fff1f0", color="#cf222e"];
+    b1 [label="Redpanda message broker", fillcolor="#fff1f0", color="#cf222e"];
+    c1 [label="radix-tree parser", fillcolor="#fff1f0", color="#cf222e"];
+    d1 [label="MiniLM embeddings", fillcolor="#fff1f0", color="#cf222e"];
+    e1 [label="cloud LLM calls", fillcolor="#fff1f0", color="#cf222e"];
     a1 -> b1 -> c1 -> d1 -> e1;
   }
 
   subgraph cluster_reality {
-    label="Production Rust implementation (ULPF)";
+    label="shipped ULPF implementation";
     labelloc="t"; style="rounded,filled"; fillcolor="#dafbe1"; color="#1a7f37"; fontsize="13";
-    a2 [label="Async Tokio sockets\n(SO_REUSEPORT on all cores)", fillcolor="#dafbe1", color="#1a7f37"];
-    b2 [label="Direct in-memory buffering\n(zero broker overhead)", fillcolor="#dafbe1", color="#1a7f37"];
-    c2 [label="Aho-Corasick classifier (49 ns)\n+ zero-copy byte extractors", fillcolor="#dafbe1", color="#1a7f37"];
-    d2 [label="Native Rust Drain miner\n(under 10 microseconds per log, zero GPU)", fillcolor="#dafbe1", color="#1a7f37"];
-    e2 [label="100% air-gapped synthesizer\n(compiles regex in 3.88 ms)", fillcolor="#dafbe1", color="#1a7f37"];
+    a2 [label="Tokio async sockets", fillcolor="#dafbe1", color="#1a7f37"];
+    b2 [label="in-memory buffering", fillcolor="#dafbe1", color="#1a7f37"];
+    c2 [label="Aho-Corasick classifier", fillcolor="#dafbe1", color="#1a7f37"];
+    d2 [label="Rust Drain miner", fillcolor="#dafbe1", color="#1a7f37"];
+    e2 [label="air-gapped synthesizer", fillcolor="#dafbe1", color="#1a7f37"];
     a2 -> b2 -> c2 -> d2 -> e2;
   }
 
-  a1 -> a2 [style=dotted, color="#cf222e", label="engineered for reality", constraint=false];
+  a1 -> a2 [style=dotted, color="#cf222e", label="matched in ULPF", constraint=false];
 }
