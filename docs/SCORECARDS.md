@@ -97,7 +97,7 @@ From §1b of each report. Each row is a pass/fail gate:
 | Lossless SHA-256 match | 1,720 | 224,657 | 757 | `raw_hash == SHA-256(raw_log)` verified per line |
 | Action Inviolability | 100% | 100% | 100% | Drain anchor tokens + dedicated tests |
 
-**Cryptographic chain of custody:**
+### Cryptographic chain of custody
 
 ```console
 $ ulpf verify --file data/parquet/block_00001.parquet --ledger data/ledger.jsonl

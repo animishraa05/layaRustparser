@@ -144,8 +144,9 @@ impl DuelReport {
              unique ground-truth templates reproduced by some mined template.\n",
         );
         md.push_str(
-            "- **Action violations** = clusters holding both allow-side (`Allowed`) and \
-             deny-side (`Blocked`/`Dropped`) dispositions.\n\n",
+            "- **Action violations** = clusters holding both an allow-side and a deny-side \
+             disposition (vocabulary: allowed/allow/accept/accepted/pass/permit/permitted \
+             vs blocked/block/deny/denied/drop/dropped/reject/rejected).\n\n",
         );
 
         md.push_str("## Fixtures\n\n");
@@ -170,7 +171,7 @@ impl DuelReport {
         for r in &self.rounds {
             for (label, e) in [("vanilla Drain", &r.vanilla), ("3-tier", &r.tiered)] {
                 md.push_str(&format!(
-                    "| {} | {} | {} | {} | {} | {:.2} | {} | {} | {} |\n",
+                    "| {} | {} | {} | {} | {} | {:.2}% | {} | {} | {} |\n",
                     r.name,
                     r.lines,
                     r.gt_classes,

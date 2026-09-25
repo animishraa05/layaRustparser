@@ -13,7 +13,7 @@
 - **GA (grouping accuracy)** = Σ over clusters of the cluster's majority ground-truth class count ÷ total lines (the evaluator's exact formula).
 - **PA (parsing accuracy)** = lines whose mined template reproduces the ground-truth template as an exact **token suffix** after canonicalisation: whitespace-normalised token sequences, any digit-bearing token compared as `<*>` (tokenizer alignment between ULPF's masker and LogPAI's), trailing `,;:` ignored.
 - **FTA (template F1, set-level)** = F1 over unique templates — precision = unique mined templates that suffix-match some ground-truth template; recall = unique ground-truth templates reproduced by some mined template.
-- **Action violations** = clusters holding both allow-side (`Allowed`) and deny-side (`Blocked`/`Dropped`) dispositions.
+- **Action violations** = clusters holding both an allow-side and a deny-side disposition (vocabulary: allowed/allow/accept/accepted/pass/permit/permitted vs blocked/block/deny/denied/drop/dropped/reject/rejected).
 
 ## Fixtures
 
@@ -25,14 +25,14 @@
 
 | Round | Lines | GT classes | Engine | Clusters | GA % | PA % | FTA % | Violations |
 | --- | ---: | ---: | --- | ---: | ---: | ---: | ---: | ---: |
-| R1 probe | 12 | 6 | vanilla Drain | 3 | 50.00 | 50.00% | 50.00% | 3 |
-| R1 probe | 12 | 6 | 3-tier | 6 | 100.00 | 100.00% | 100.00% | 0 |
-| R2 fuzzed | 757 | 19 | vanilla Drain | 53 | 71.73 | n/a | n/a | 17 |
-| R2 fuzzed | 757 | 19 | 3-tier | 81 | 98.41 | n/a | n/a | 10 |
-| R3 BGL | 2000 | 120 | vanilla Drain | 57 | 83.50 | 32.80% | 67.75% | n/a |
-| R3 BGL | 2000 | 120 | 3-tier | 61 | 83.95 | 34.10% | 70.53% | n/a |
-| R3 TBird | 2000 | 149 | vanilla Drain | 60 | 82.25 | 48.10% | 30.41% | n/a |
-| R3 TBird | 2000 | 149 | 3-tier | 63 | 83.55 | 49.00% | 33.21% | n/a |
+| R1 probe | 12 | 6 | vanilla Drain | 3 | 50.00% | 50.00% | 50.00% | 3 |
+| R1 probe | 12 | 6 | 3-tier | 6 | 100.00% | 100.00% | 100.00% | 0 |
+| R2 fuzzed | 757 | 19 | vanilla Drain | 53 | 71.73% | n/a | n/a | 17 |
+| R2 fuzzed | 757 | 19 | 3-tier | 81 | 98.41% | n/a | n/a | 10 |
+| R3 BGL | 2000 | 120 | vanilla Drain | 57 | 83.50% | 32.80% | 67.75% | n/a |
+| R3 BGL | 2000 | 120 | 3-tier | 61 | 83.95% | 34.10% | 70.53% | n/a |
+| R3 TBird | 2000 | 149 | vanilla Drain | 60 | 82.25% | 48.10% | 30.41% | n/a |
+| R3 TBird | 2000 | 149 | 3-tier | 63 | 83.55% | 49.00% | 33.21% | n/a |
 
 **3-tier capability over all duel lines:** lossless 4769/4769 (`raw_hash` == SHA-256(raw)), panics 0.
 

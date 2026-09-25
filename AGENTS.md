@@ -30,7 +30,7 @@ Real entrypoints: `crates/ulpf-cli/src/main.rs`, `crates/ulpf-generator/src/main
 # Verification gate — run in this order before commit. There is no CI to catch you.
 cargo clippy --workspace --all-targets -- -A clippy::too_many_arguments -A clippy::field_reassign_with_default -D warnings
 cargo fmt --all -- --check
-cargo test --workspace        # 56 tests; takes ~40s (ai_tests alone ~30s)
+cargo test --workspace        # ~124 tests and growing; ai/duel suites dominate runtime
 
 # Focused runs
 cargo test -p ulpf-core --test parser_tests <test_name_substr>
