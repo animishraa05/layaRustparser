@@ -1,4 +1,5 @@
 pub mod drain;
+pub mod duel;
 pub mod evaluator;
 pub mod laya;
 pub mod onboarder;
