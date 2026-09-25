@@ -1,5 +1,6 @@
 use chrono::Utc;
 use regex::Regex;
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
@@ -444,6 +445,18 @@ fn parse_endpoint_str(
         Some((h, p)) => (h, p.parse::<u16>().ok()),
         None => (clean, None),
     };
+
+    // Brackets never occur in interface names or IPs: syslog `[v6]`
+    // wrapping (and the lone trailing `]` left when edge-trim ate the
+    // opening bracket before this split) must go before the IP check,
+    // or `[2001:db8::5]` fails it and `2001` becomes an interface.
+    // Gated on presence: clean lines keep borrowing, allocate nothing.
+    let hostpart: Cow<str> = if hostpart.contains(['[', ']']) {
+        Cow::Owned(hostpart.replace(['[', ']'], ""))
+    } else {
+        Cow::Borrowed(hostpart)
+    };
+    let hostpart = hostpart.as_ref();
 
     if hostpart.contains(':') && hostpart.parse::<std::net::IpAddr>().is_ok() {
         // Bare IP literal (v4-mapped or IPv6): no interface prefix.

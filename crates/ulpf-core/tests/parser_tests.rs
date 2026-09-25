@@ -844,6 +844,33 @@ fn test_asa_ipv6_denied_endpoints() {
 }
 
 #[test]
+fn test_asa_bracketed_ipv6_endpoints() {
+    let parser = UniversalParser::new();
+    // Bracketed forms: `outside:[2001:db8::57]/80` (built) and bare
+    // `[2001:db8::5]/5555` (106001). Edge-trim eats the opening bracket
+    // before the port split, so the hostpart must shed brackets itself —
+    // otherwise the IP check fails and `2001` becomes an interface.
+    let raw = "%ASA-6-302013: Built inbound TCP connection 1004583 for outside:[2001:db8::57]/80 to inside:[2001:db8:1::9]/443";
+    let event = parser.parse(raw).expect("parse asa bracketed ipv6");
+    assert_eq!(event.src_endpoint.ip.as_deref(), Some("2001:db8::57"));
+    assert_eq!(event.src_endpoint.port, Some(80));
+    assert_eq!(event.src_endpoint.interface.as_deref(), Some("outside"));
+    assert_eq!(event.dst_endpoint.ip.as_deref(), Some("2001:db8:1::9"));
+    assert_eq!(event.dst_endpoint.port, Some(443));
+
+    let raw2 = "%ASA-2-106001: Inbound TCP connection denied from [2001:db8::5]/5555 to [2001:db8:1::2]/80 flags SYN on interface outside";
+    let event2 = parser.parse(raw2).expect("parse asa bare bracketed ipv6");
+    assert_eq!(event2.src_endpoint.ip.as_deref(), Some("2001:db8::5"));
+    assert_eq!(event2.src_endpoint.port, Some(5555));
+    assert_eq!(event2.src_endpoint.interface.as_deref(), Some("outside"));
+    assert_eq!(event2.dst_endpoint.ip.as_deref(), Some("2001:db8:1::2"));
+    assert_eq!(
+        event2.metadata.raw_hash,
+        hex::encode(Sha256::digest(raw2.as_bytes()))
+    );
+}
+
+#[test]
 fn test_fortigate_ipv6_endpoints() {
     let parser = UniversalParser::new();
     let raw = "date=2023-10-15 time=10:20:30 devname=\"FGT60D\" logid=\"0000000013\" type=\"traffic\" srcip=2001:db8::5 srcport=51234 dstip=2001:db8:1::9 dstport=443 proto=6 action=accept policyid=1";
