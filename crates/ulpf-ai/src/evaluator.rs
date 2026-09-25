@@ -55,8 +55,10 @@ pub struct AccuracyAuditSummary {
     pub grouping_accuracy_ga_pct: f64,
     /// Academic Template Accuracy (TA %): dynamic variable isolation into <*>
     pub template_accuracy_ta_pct: f64,
-    /// Macro-averaged field extraction accuracy F1-score across all attributes
-    pub field_extraction_f1_pct: f64,
+    /// Mean field-extraction accuracy across the five IP/port/protocol
+    /// attributes (a plain arithmetic mean — the retired "Macro F1" label
+    /// was a misnomer, never a precision/recall F1).
+    pub mean_field_accuracy_pct: f64,
     /// Source IP extraction accuracy (valid IPv4/IPv6 present in raw line)
     pub src_ip_accuracy_pct: f64,
     /// Destination IP extraction accuracy
@@ -346,9 +348,9 @@ impl EvaluationReport {
             ));
             out.push_str(&format!(
                 "  {:<38} | \x1b[1;32m{:<27}\x1b[0m | \x1b[1;32m{:<27}\x1b[0m\n",
-                "Field Extraction Macro F1-Score",
-                format!("{:.2}%", b.accuracy.field_extraction_f1_pct),
-                format!("{:.2}%", t.accuracy.field_extraction_f1_pct)
+                "Field Extraction Mean Accuracy",
+                format!("{:.2}%", b.accuracy.mean_field_accuracy_pct),
+                format!("{:.2}%", t.accuracy.mean_field_accuracy_pct)
             ));
             out.push_str(&format!(
                 "  {:<38} | {:<27} | {:<27}\n",
@@ -496,8 +498,8 @@ impl EvaluationReport {
                 single.accuracy.template_accuracy_ta_pct
             ));
             out.push_str(&format!(
-                "  Field Extraction Macro F1 : \x1b[1;32m{:.2}%\x1b[0m\n",
-                single.accuracy.field_extraction_f1_pct
+                "  Mean Field Accuracy       : \x1b[1;32m{:.2}%\x1b[0m\n",
+                single.accuracy.mean_field_accuracy_pct
             ));
             out.push_str(&format!(
                 "  • Source IP Accuracy      : {:.1}%\n",
@@ -611,7 +613,7 @@ impl EvaluationReport {
             md.push_str(&format!("| **Template Accuracy (TA %)** | **{:.2}%** | **{:.2}%** | Template Validity (generalization-correct vs masked line) |\n", b.accuracy.template_accuracy_ta_pct, t.accuracy.template_accuracy_ta_pct));
             md.push_str(&format!("| **Oracle GA Ceiling (GT-hash, unfair)** | **{:.2}%** | **{:.2}%** | Labeled Ceiling — Not a Fair Baseline |\n", b.accuracy.oracle_ga_pct, t.accuracy.oracle_ga_pct));
             md.push_str(&format!("| **Unique Templates (compression)** | **{}** | **{}** | Strictly Fewer vs Naive Baseline (§5.2) |\n", b.accuracy.unique_clusters, t.accuracy.unique_clusters));
-            md.push_str(&format!("| **Field Extraction Macro F1** | **{:.2}%** | **{:.2}%** | IP/Port/Proto Extraction |\n", b.accuracy.field_extraction_f1_pct, t.accuracy.field_extraction_f1_pct));
+            md.push_str(&format!("| **Field Extraction Mean Accuracy** | **{:.2}%** | **{:.2}%** | IP/Port/Proto Extraction |\n", b.accuracy.mean_field_accuracy_pct, t.accuracy.mean_field_accuracy_pct));
             md.push_str(&format!("| **Disposition Resolution Accuracy** | **{:.2}%** | **{:.2}%** | OCSF Action Mapping |\n", b.accuracy.disposition_accuracy_pct, t.accuracy.disposition_accuracy_pct));
             md.push_str("| **Action Inviolability** | N/A | **100% PRESERVED** | `ALLOW`/`DENY` isolated |\n\n");
 
@@ -1967,7 +1969,8 @@ impl EvaluatorEngine {
         let dst_port_pct = (dst_port_correct as f64 / audit_count as f64) * 100.0;
         let proto_pct = (proto_correct as f64 / audit_count as f64) * 100.0;
 
-        let field_f1 = (src_ip_pct + dst_ip_pct + src_port_pct + dst_port_pct + proto_pct) / 5.0;
+        let mean_field_accuracy =
+            (src_ip_pct + dst_ip_pct + src_port_pct + dst_port_pct + proto_pct) / 5.0;
         let disp_pct = (disposition_correct as f64 / audit_count as f64) * 100.0;
         let action_inviolability = if Self::verify_action_preservation() {
             100.0
@@ -1980,7 +1983,7 @@ impl EvaluatorEngine {
             vendor_classification_accuracy_pct: vca_pct,
             grouping_accuracy_ga_pct: ga_pct,
             template_accuracy_ta_pct: ta_pct,
-            field_extraction_f1_pct: field_f1,
+            mean_field_accuracy_pct: mean_field_accuracy,
             src_ip_accuracy_pct: src_ip_pct,
             dst_ip_accuracy_pct: dst_ip_pct,
             src_port_accuracy_pct: src_port_pct,

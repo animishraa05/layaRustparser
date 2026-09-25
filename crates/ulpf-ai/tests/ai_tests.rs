@@ -452,6 +452,16 @@ fn test_evaluator_comparative_run() {
 
     let md = report.to_markdown();
     assert!(md.contains("ULPF Hardcore Architectural"));
+    // The five-field mean is not an F1 — the retired "Macro F1" label must
+    // never resurface in generated output.
+    assert!(
+        md.contains("Field Extraction Mean Accuracy"),
+        "markdown must use the honest name:\n{md}"
+    );
+    assert!(
+        !md.contains("Macro F1"),
+        "retired misnomer leaked into markdown"
+    );
 
     let terminal_dash = report.render_terminal_dashboard();
     assert!(terminal_dash.contains("ULPF HARDCORE ARCHITECTURAL & ACCURACY EVALUATOR"));

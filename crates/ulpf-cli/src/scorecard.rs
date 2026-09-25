@@ -176,9 +176,9 @@ pub fn render(report: &EvaluationReport, duel: Option<&DuelReport>, report_path:
             t.accuracy.template_accuracy_ta_pct,
         ),
         (
-            "Mean field accuracy (aka Macro F1)",
-            b.accuracy.field_extraction_f1_pct,
-            t.accuracy.field_extraction_f1_pct,
+            "Mean field accuracy",
+            b.accuracy.mean_field_accuracy_pct,
+            t.accuracy.mean_field_accuracy_pct,
         ),
         (
             "  - source IP",
@@ -313,7 +313,7 @@ pub fn render(report: &EvaluationReport, duel: Option<&DuelReport>, report_path:
         pct(t.accuracy.vendor_classification_accuracy_pct),
         pct(t.accuracy.grouping_accuracy_ga_pct),
         pct(t.accuracy.template_accuracy_ta_pct),
-        pct(t.accuracy.field_extraction_f1_pct),
+        pct(t.accuracy.mean_field_accuracy_pct),
     ));
     out.push_str(&format!(
         "  Latency: median {} ({}), p99 {} ({}) vs baseline\n",
@@ -671,7 +671,7 @@ mod tests {
         vca: f64,
         ga: f64,
         ta: f64,
-        f1: f64,
+        mean_acc: f64,
         disp: f64,
         inviol: f64,
         clusters: usize,
@@ -681,7 +681,7 @@ mod tests {
             vendor_classification_accuracy_pct: vca,
             grouping_accuracy_ga_pct: ga,
             template_accuracy_ta_pct: ta,
-            field_extraction_f1_pct: f1,
+            mean_field_accuracy_pct: mean_acc,
             src_ip_accuracy_pct: 100.0,
             dst_ip_accuracy_pct: 100.0,
             src_port_accuracy_pct: 100.0,
