@@ -767,6 +767,28 @@ fn test_cef_escaped_equals_in_extension() {
 }
 
 #[test]
+fn test_multibyte_hostname_line_parses_without_panic() {
+    let parser = UniversalParser::new();
+    // 5-byte tag + 89 ASCII + '€' (bytes 94-96): the Tier-1 96-byte
+    // signature window ends inside the euro sign. Byte slicing there
+    // panics ("not a char boundary") — the hot path must not.
+    let raw = format!(
+        "<166>{}€ %ASA-6-302013: Built inbound TCP connection 1004583 for outside:203.0.113.57/80 to inside:10.1.13.22/80",
+        "A".repeat(89)
+    );
+    // NOTE: `parse_cached` — the plain `parse` bypasses the Tier-1 LRU.
+    let event = parser
+        .parse_cached(&raw)
+        .expect("multibyte prefix must not panic the hot path");
+    assert_eq!(event.disposition, disposition::ALLOWED);
+    assert_eq!(event.src_endpoint.ip.as_deref(), Some("203.0.113.57"));
+    assert_eq!(
+        event.metadata.raw_hash,
+        hex::encode(Sha256::digest(raw.as_bytes()))
+    );
+}
+
+#[test]
 fn test_paloalto_quoted_csv_with_escaped_quotes() {
     use ulpf_core::parser::extractors::split_csv;
 
