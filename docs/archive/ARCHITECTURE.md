@@ -11,9 +11,9 @@ Traditional log pre-processing pipelines suffer from three fundamental architect
 
 **ULPF** solves these challenges via a modular, high-performance architecture written in **Rust**, normalizing any perimeter device log into standard **Open Cybersecurity Schema Framework (OCSF 1.3)** while cryptographically proving non-repudiation using **RFC 6962 Merkle Trees** and enabling **100% air-gapped AI onboarding**.
 
-![ULPF pipeline architecture: (1) async ingestion plane, (2) two-tier zero-copy parsing & normalization, forking to (3) integrity & storage plane and (4) air-gapped AI & anomaly plane](diagrams/ulpf-architecture-planes.png)
+![ULPF pipeline architecture: (1) async ingestion plane, (2) two-tier zero-copy parsing & normalization, forking to (3) integrity & storage plane and (4) air-gapped AI & anomaly plane](../diagrams/ulpf-architecture-planes.png)
 
-> Source: [`diagrams/ulpf-architecture-planes.dot`](diagrams/ulpf-architecture-planes.dot) — regenerate with `dot -Tpng -Gdpi=144 diagrams/ulpf-architecture-planes.dot -o diagrams/ulpf-architecture-planes.png`.
+> Source: [`diagrams/ulpf-architecture-planes.dot`](../diagrams/ulpf-architecture-planes.dot) — regenerate with `dot -Tpng -Gdpi=144 diagrams/ulpf-architecture-planes.dot -o diagrams/ulpf-architecture-planes.png`.
 
 ---
 

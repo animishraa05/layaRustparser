@@ -2,6 +2,13 @@ name: CI
 
 on:
   push:
+    paths-ignore:
+      # Docs-only pushes skip CI: no code under test changed. PRs always
+      # run the full gate (review safety).
+      - '**.md'
+      - '**.png'
+      - '**.dot'
+      - 'docs/**'
   pull_request:
 
 jobs:
@@ -19,5 +26,10 @@ jobs:
         run: cargo clippy --workspace --all-targets -- -A clippy::too_many_arguments -A clippy::field_reassign_with_default -D warnings
       - name: Format
         run: cargo fmt --all -- --check
+      # NOTE: the known load-flaky micro-benchmark
+      # (test_classification_sub_microsecond_benchmark, see AGENTS.md
+      # Gotchas) is skipped here — it asserts sub-2µs timing in a debug
+      # build and flakes on busy shared runners. The local gate still runs
+      # it (re-run on flake); CI must not send mail for it.
       - name: Tests
-        run: cargo test --workspace
+        run: cargo test --workspace -- --skip test_classification_sub_microsecond_benchmark

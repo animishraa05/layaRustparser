@@ -29,7 +29,7 @@ The initial PDF specification (*"ULPF Deep-Dive Engineering & Architecture Speci
 
 Here is a side-by-side comparison of what the PDF suggested, why it had flaws, and how we solved it:
 
-![Theoretical proposal (red) engineered into the production ULPF pipeline (green)](diagrams/proposal-vs-reality.png)
+![Theoretical proposal (red) engineered into the production ULPF pipeline (green)](../diagrams/proposal-vs-reality.png)
 
 ### Detailed Breakdown of Differences
 
@@ -96,7 +96,7 @@ Think of a Merkle Tree like a **1,000-team sports tournament**:
 - Each match winner advances to the next round until there is only **1 Grand Champion (The Merkle Root)**.
 - If an impostor secretly swaps out the score of Match #1 at the bottom of the bracket, that change bubbles up through every subsequent round, and the **Championship Trophy Hash completely changes**!
 
-![Merkle tree with tampered Leaf #0 — one changed byte re-roots the whole tree](diagrams/merkle-tree.png)
+![Merkle tree with tampered Leaf #0 — one changed byte re-roots the whole tree](../diagrams/merkle-tree.png)
 
 ### What Happened in Step 4 of the Demo?
 
@@ -129,7 +129,7 @@ Traditional firewalls only flag logs when a specific rule triggers. But what if 
 
 Instead of slow, expensive deep learning, ULPF uses **Drain3 Log Template Mining**:
 
-![Drain template-mining and anomaly-alert flow](diagrams/drain-anomaly-flow.png)
+![Drain template-mining and anomaly-alert flow](../diagrams/drain-anomaly-flow.png)
 
 Because Drain3 executes in **$< 10$ microseconds**, it monitors the structural health of every incoming log stream in real time with zero performance degradation.
 
