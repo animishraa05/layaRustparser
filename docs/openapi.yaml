@@ -1,0 +1,207 @@
+openapi: 3.0.3
+info:
+  title: ULPF Air-Gapped High-Performance REST API
+  description: Backend API for the Universal Log Pre-processing Framework serving Analyst Dashboard, Investigation, and Management UI.
+  version: 0.1.0
+servers:
+  - url: http://localhost:8080
+    description: Local air-gapped development server
+paths:
+  /metrics:
+    get:
+      summary: Live Telemetry & Vendor Mix
+      description: Returns live throughput (EPS), p50/p99 latency percentiles, queue depth, LRU hit rate, vendor mix, and disposition breakdown.
+      responses:
+        '200':
+          description: Telemetry data retrieved successfully
+  /alerts:
+    get:
+      summary: Security & Anomaly Alerts Feed
+      description: Returns list of tamper alarms and Drain structural novelty alerts.
+      responses:
+        '200':
+          description: List of active alerts
+  /blocks:
+    get:
+      summary: Ledger Archive Blocks List
+      description: Lists all blocks recorded in append-only Merkle ledger with PASS/FAIL audit status.
+      responses:
+        '200':
+          description: Blocks retrieved
+  /blocks/{id}/records:
+    get:
+      summary: Block Forensic Records Query
+      description: Paginated search over Parquet records with raw log and OCSF 1.3 split view.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            default: 0
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 50
+        - name: vendor
+          in: query
+          schema:
+            type: string
+        - name: disposition
+          in: query
+          schema:
+            type: string
+        - name: ip
+          in: query
+          schema:
+            type: string
+        - name: query
+          in: query
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Records retrieved successfully
+        '404':
+          description: Block not found
+  /prove/{block}/{leaf}:
+    get:
+      summary: RFC 6962 Merkle Inclusion Proof
+      description: Stubs with 501 by default per Issue #12 criteria; pass ?live=true for mathematical proof path.
+      parameters:
+        - name: block
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: leaf
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: live
+          in: query
+          schema:
+            type: boolean
+            default: false
+      responses:
+        '200':
+          description: Proof generated successfully
+        '501':
+          description: Endpoint stubbed pending #5
+  /export/bundle/{id}:
+    get:
+      summary: Courtroom Evidence Bundle Export
+      description: Generates self-describing .tar.gz archive with block Parquet, ledger line, and checksums.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Tar.gz archive download
+          content:
+            application/gzip:
+              schema:
+                type: string
+                format: binary
+  /parsers:
+    get:
+      summary: List Registered Parsers
+      description: Lists built-in native extractors and dynamic onboarded parsers.
+      responses:
+        '200':
+          description: List of parsers
+  /parsers/test:
+    post:
+      summary: Dry-Run Single Line Parser Test
+      description: Tests single log line against existing or ad-hoc regex without writing to disk.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - raw_log
+              properties:
+                raw_log:
+                  type: string
+                vendor:
+                  type: string
+                regex_pattern:
+                  type: string
+      responses:
+        '200':
+          description: Test execution result
+  /onboard:
+    post:
+      summary: 1-Click Parser Onboarding Wizard
+      description: Synthesizes regex parser from sample lines. Preview mode if confirm=false; persists and hot-loads if confirm=true.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - vendor
+                - sample_lines
+              properties:
+                vendor:
+                  type: string
+                device_model:
+                  type: string
+                sample_lines:
+                  type: array
+                  items:
+                    type: string
+                confirm:
+                  type: boolean
+                  default: false
+      responses:
+        '200':
+          description: Parser preview generated
+        '201':
+          description: Parser hot-loaded and persisted
+  /tamper/drill:
+    post:
+      summary: Isolated Adversarial Tamper Drill
+      description: Safely clones evidence block to scratch directory and tampers only the clone to generate alarm.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - block_id
+              properties:
+                block_id:
+                  type: integer
+                leaf_index:
+                  type: integer
+                  default: 0
+                spoofed_ip:
+                  type: string
+                  default: "10.99.99.99"
+                confirm:
+                  type: boolean
+                  default: false
+      responses:
+        '200':
+          description: Tamper drill result
+  /system:
+    get:
+      summary: System Settings & Benchmarks
+      description: Returns batcher config, queue depth, and comparative scorecard.
+      responses:
+        '200':
+          description: System status retrieved

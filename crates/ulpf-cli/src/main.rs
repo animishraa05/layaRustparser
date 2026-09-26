@@ -21,7 +21,7 @@ use ulpf_integrity::batcher::{BatchAccumulator, BatcherConfig, IncomingLog};
 use ulpf_integrity::storage::ParquetCompression;
 use ulpf_integrity::tamper::verify_block_with_ledger;
 
-mod scorecard;
+use ulpf_cli::{scorecard, serve};
 
 #[derive(Parser, Debug)]
 #[command(
@@ -53,6 +53,8 @@ enum Commands {
     Inspect(InspectArgs),
     /// Adversarial simulation: stealthily tamper with an archived Parquet record
     Tamper(TamperArgs),
+    /// Launch the lightweight HTTP backend for UI and SIEM integration
+    Serve(serve::ServeArgs),
 }
 
 #[derive(Args, Debug)]
@@ -269,6 +271,7 @@ async fn main() -> Result<()> {
         Commands::Scorecard(args) => run_scorecard(args),
         Commands::Inspect(args) => run_inspect(args),
         Commands::Tamper(args) => run_tamper(args),
+        Commands::Serve(args) => serve::run_serve(args).await,
     }
 }
 

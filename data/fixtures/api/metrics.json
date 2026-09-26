@@ -1,0 +1,25 @@
+{
+  "eps": 142500.0,
+  "latency_p50_micros": 1.28,
+  "latency_p99_micros": 4.12,
+  "queue_depth": 0,
+  "queue_capacity": 50000,
+  "dropped_count": 0,
+  "lru_hit_rate": 0.962,
+  "total_ingested": 25000,
+  "total_parsed": 25000,
+  "total_blocks": 25,
+  "vendor_mix": {
+    "cisco_asa": 32.5,
+    "fortigate": 28.0,
+    "paloalto": 21.5,
+    "pfsense": 12.0,
+    "suricata": 6.0
+  },
+  "disposition_breakdown": {
+    "Allowed": 18240,
+    "Blocked": 5610,
+    "Dropped": 1150
+  },
+  "status": "HEALTHY"
+}

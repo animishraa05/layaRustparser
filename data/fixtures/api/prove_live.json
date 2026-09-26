@@ -1,0 +1,24 @@
+{
+  "block_id": 1,
+  "leaf_index": 0,
+  "tree_size": 1000,
+  "leaf_hash": "23dfa4b126307137f68c7849cb16b9b329ad4148e6587c6778dc651f158db49f",
+  "calculated_merkle_root": "398e59a6304ea9fa83b3d9eb5f0739bf081a01ce4d34e30e5c320040fd9e69a8",
+  "ledger_merkle_root": "398e59a6304ea9fa83b3d9eb5f0739bf081a01ce4d34e30e5c320040fd9e69a8",
+  "verified": true,
+  "audit_path": [
+    {
+      "hash": "b5a92d4e8c3f1a2b0c4e5d6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c",
+      "side": "Right"
+    },
+    {
+      "hash": "c6b03e5f9d4a2b1c0d5e6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d",
+      "side": "Right"
+    },
+    {
+      "hash": "d7c14f6a0e5b3c2d1e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8e",
+      "side": "Right"
+    }
+  ],
+  "standard": "RFC 6962 Certificate Transparency Standard"
+}

@@ -1,0 +1,39 @@
+{
+  "matched": true,
+  "vendor": "cisco_asa",
+  "parsed_ocsf": {
+    "activity_id": 1,
+    "activity_name": "Open",
+    "category_uid": 4,
+    "class_uid": 4001,
+    "type_uid": 400101,
+    "disposition": "Allowed",
+    "time": 1789984478081,
+    "src_endpoint": {
+      "ip": "203.0.113.54",
+      "port": 25,
+      "interface": "outside"
+    },
+    "dst_endpoint": {
+      "ip": "10.1.6.180",
+      "port": 52369,
+      "interface": "inside"
+    },
+    "connection_info": {
+      "protocol_name": "TCP",
+      "protocol_num": 6,
+      "direction": "Outbound"
+    },
+    "metadata": {
+      "product": {
+        "vendor_name": "Cisco",
+        "name": "ASA"
+      },
+      "version": "1.3.0"
+    }
+  },
+  "parse_duration_micros": 2.1,
+  "raw_hash": "23dfa4b126307137f68c7849cb16b9b329ad4148e6587c6778dc651f158db49f",
+  "protocol_detected": "HTTP/1.1 (TCP)",
+  "notes": "Parsed through dynamic registry / universal baseline (read-only)"
+}

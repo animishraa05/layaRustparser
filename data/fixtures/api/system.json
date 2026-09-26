@@ -1,0 +1,22 @@
+{
+  "service_name": "ULPF Air-Gapped Forensic Backend",
+  "version": "0.1.0",
+  "air_gapped": true,
+  "uptime_secs": 3600,
+  "batcher": {
+    "max_batch_size": 1000,
+    "max_batch_duration_ms": 2000,
+    "storage_dir": "data/parquet",
+    "ledger_path": "data/ledger.jsonl",
+    "compression": "Snappy (Lossless Columnar Parquet)"
+  },
+  "ingest_queue_capacity": 50000,
+  "ingest_queue_depth": 0,
+  "dynamic_parsers_loaded": 0,
+  "total_archived_blocks": 25,
+  "benchmark_summary": {
+    "mode": "all",
+    "throughput_speedup_factor": 1.76,
+    "latency_reduction_p50_pct": 52.4
+  }
+}

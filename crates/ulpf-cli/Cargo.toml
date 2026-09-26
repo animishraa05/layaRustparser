@@ -4,6 +4,10 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[lib]
+name = "ulpf_cli"
+path = "src/lib.rs"
+
 [[bin]]
 name = "ulpf"
 path = "src/main.rs"
@@ -22,3 +26,14 @@ serde_json = { workspace = true }
 chrono = { workspace = true }
 hex = { workspace = true }
 regex = { workspace = true }
+axum = { version = "0.8.9", default-features = false, features = ["tokio", "json", "query", "http1", "http2"] }
+tower-http = { version = "0.7.1", default-features = false, features = ["cors"] }
+tar = "0.4.46"
+flate2 = "1.1.10"
+uuid = { workspace = true }
+sha2 = { workspace = true }
+
+[dev-dependencies]
+tower = { version = "0.5.3", features = ["util"] }
+http-body-util = "0.1.5"
+tempfile = "3.27"

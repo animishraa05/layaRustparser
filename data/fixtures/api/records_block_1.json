@@ -1,0 +1,86 @@
+{
+  "block_id": 1,
+  "total_records_in_block": 1000,
+  "filtered_records_count": 1000,
+  "offset": 0,
+  "limit": 2,
+  "records": [
+    {
+      "event_id": "0195d2c2-84b2-7c3a-9e12-4211832049b0",
+      "block_id": 1,
+      "leaf_index": 0,
+      "timestamp": 1789984478081,
+      "vendor": "cisco_asa",
+      "raw_log": "<166>Sep 21 14:00:01 asa-core-fw %ASA-6-302013: Built outbound TCP connection 1000672 for outside:203.0.113.54/25 (203.0.113.54/25) to inside:10.1.6.180/52369 (198.51.100.209/52369)",
+      "raw_hash": "23dfa4b126307137f68c7849cb16b9b329ad4148e6587c6778dc651f158db49f",
+      "ocsf": {
+        "activity_id": 1,
+        "activity_name": "Open",
+        "category_uid": 4,
+        "class_uid": 4001,
+        "type_uid": 400101,
+        "disposition": "Allowed",
+        "time": 1789984478081,
+        "src_endpoint": {
+          "ip": "203.0.113.54",
+          "port": 25,
+          "interface": "outside"
+        },
+        "dst_endpoint": {
+          "ip": "10.1.6.180",
+          "port": 52369,
+          "interface": "inside"
+        },
+        "connection_info": {
+          "protocol_name": "TCP",
+          "protocol_num": 6,
+          "direction": "Outbound"
+        },
+        "metadata": {
+          "product": {
+            "vendor_name": "Cisco",
+            "name": "ASA"
+          },
+          "version": "1.3.0"
+        }
+      }
+    },
+    {
+      "event_id": "0195d2c2-84b2-7c3a-9e12-4211832049b1",
+      "block_id": 1,
+      "leaf_index": 1,
+      "timestamp": 1789984478082,
+      "vendor": "fortigate",
+      "raw_log": "<189>date=2026-09-21 time=14:00:02 devname=\"FGT-DC-EDGE\" logid=\"0000000019\" type=\"traffic\" srcip=192.168.7.45 srcport=29853 dstip=203.0.113.46 dstport=53 proto=17 action=\"deny\"",
+      "raw_hash": "4a7b9c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b",
+      "ocsf": {
+        "activity_id": 3,
+        "activity_name": "Traffic/Flow",
+        "category_uid": 4,
+        "class_uid": 4001,
+        "type_uid": 400103,
+        "disposition": "Blocked",
+        "time": 1789984478082,
+        "src_endpoint": {
+          "ip": "192.168.7.45",
+          "port": 29853
+        },
+        "dst_endpoint": {
+          "ip": "203.0.113.46",
+          "port": 53
+        },
+        "connection_info": {
+          "protocol_name": "UDP",
+          "protocol_num": 17
+        },
+        "metadata": {
+          "product": {
+            "vendor_name": "Fortinet",
+            "name": "FortiGate"
+          },
+          "version": "1.3.0"
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,572 @@
+use std::io::Read;
+use std::path::PathBuf;
+use std::process::Command;
+
+use axum::body::Body;
+use axum::http::{header, Request, StatusCode};
+use flate2::read::GzDecoder;
+use http_body_util::BodyExt;
+use tar::Archive;
+use tower::ServiceExt;
+
+use ulpf_cli::serve::{create_router, AppState};
+
+fn repo_root() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .canonicalize()
+        .expect("canonicalize repo root")
+}
+
+fn bin() -> &'static str {
+    env!("CARGO_BIN_EXE_ulpf")
+}
+
+fn setup_test_state() -> AppState {
+    let root = repo_root();
+    AppState::new(
+        root.join("data/parquet"),
+        root.join("data/ledger.jsonl"),
+        root.join("data/parsers"),
+        root.join("eval_hardcore_report.md"),
+    )
+}
+
+#[test]
+fn serve_help_parses_in_debug_build() {
+    let out = Command::new(bin())
+        .args(["serve", "--help"])
+        .output()
+        .expect("spawn ulpf serve --help");
+    assert!(
+        out.status.success(),
+        "serve --help failed (exit {:?}): {}",
+        out.status.code(),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("--port"));
+    assert!(stdout.contains("--host"));
+    assert!(stdout.contains("--parquet-dir"));
+}
+
+#[tokio::test]
+async fn test_serve_get_metrics() {
+    let state = setup_test_state();
+    let app = create_router(state);
+
+    let req = Request::builder()
+        .uri("/metrics")
+        .method("GET")
+        .body(Body::empty())
+        .unwrap();
+
+    let response = app.oneshot(req).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+    assert!(json.get("eps").is_some());
+    assert!(json.get("latency_p50_micros").is_some());
+    assert!(json.get("lru_hit_rate").is_some());
+    assert!(json.get("vendor_mix").is_some());
+    assert!(json.get("disposition_breakdown").is_some());
+    assert_eq!(json.get("status").unwrap(), "HEALTHY");
+}
+
+#[tokio::test]
+async fn test_serve_get_alerts() {
+    let state = setup_test_state();
+    // Allow state background task to finish seeding alerts
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+    let app = create_router(state);
+    let req = Request::builder()
+        .uri("/alerts")
+        .method("GET")
+        .body(Body::empty())
+        .unwrap();
+
+    let response = app.oneshot(req).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let alerts: Vec<serde_json::Value> = serde_json::from_slice(&body).unwrap();
+
+    assert!(!alerts.is_empty(), "Alerts feed should not be empty");
+    let has_tamper = alerts
+        .iter()
+        .any(|a| a.get("alert_type").and_then(|v| v.as_str()).unwrap_or("") == "tamper_alarm");
+    assert!(
+        has_tamper,
+        "Should contain tamper alarm for intentionally tampered block 0"
+    );
+}
+
+#[tokio::test]
+async fn test_serve_get_blocks() {
+    let state = setup_test_state();
+    let app = create_router(state);
+
+    let req = Request::builder()
+        .uri("/blocks")
+        .method("GET")
+        .body(Body::empty())
+        .unwrap();
+
+    let response = app.oneshot(req).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let blocks: Vec<serde_json::Value> = serde_json::from_slice(&body).unwrap();
+
+    assert!(!blocks.is_empty(), "Blocks list should not be empty");
+
+    // Block 0 is intentionally tampered in repo fixtures
+    let b0 = blocks
+        .iter()
+        .find(|b| b.get("block_id").and_then(|v| v.as_u64()) == Some(0));
+    assert!(b0.is_some(), "Block 0 should exist");
+    assert_eq!(b0.unwrap().get("status").unwrap(), "FAIL");
+
+    // Block 1 is valid in repo fixtures
+    let b1 = blocks
+        .iter()
+        .find(|b| b.get("block_id").and_then(|v| v.as_u64()) == Some(1));
+    assert!(b1.is_some(), "Block 1 should exist");
+    assert_eq!(b1.unwrap().get("status").unwrap(), "PASS");
+}
+
+#[tokio::test]
+async fn test_serve_get_block_records() {
+    let state = setup_test_state();
+    let app = create_router(state);
+
+    let req = Request::builder()
+        .uri("/blocks/1/records?limit=5")
+        .method("GET")
+        .body(Body::empty())
+        .unwrap();
+
+    let response = app.oneshot(req).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+    assert_eq!(json.get("block_id").unwrap(), 1);
+    assert_eq!(json.get("limit").unwrap(), 5);
+
+    let records = json.get("records").and_then(|v| v.as_array()).unwrap();
+    assert_eq!(records.len(), 5);
+
+    let rec = &records[0];
+    assert!(rec.get("event_id").is_some());
+    assert!(rec.get("raw_log").is_some());
+    assert!(rec.get("raw_hash").is_some());
+    assert!(rec.get("ocsf").is_some());
+}
+
+#[tokio::test]
+async fn test_serve_prove_stubbed_501_and_live() {
+    let state = setup_test_state();
+
+    // 1. Default without ?live=true MUST return 501 Not Implemented (criteria for Issue #12)
+    let app = create_router(state.clone());
+    let req = Request::builder()
+        .uri("/prove/1/0")
+        .method("GET")
+        .body(Body::empty())
+        .unwrap();
+
+    let response = app.oneshot(req).await.unwrap();
+    assert_eq!(response.status(), StatusCode::NOT_IMPLEMENTED);
+
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let err: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(err.get("code").unwrap(), 501);
+    assert!(err.get("message").unwrap().as_str().unwrap().contains("#5"));
+
+    // 2. With ?live=true, returns live RFC 6962 audit path and verified: true
+    let app2 = create_router(state);
+    let req_live = Request::builder()
+        .uri("/prove/1/0?live=true")
+        .method("GET")
+        .body(Body::empty())
+        .unwrap();
+
+    let response_live = app2.oneshot(req_live).await.unwrap();
+    assert_eq!(response_live.status(), StatusCode::OK);
+
+    let body_live = response_live
+        .into_body()
+        .collect()
+        .await
+        .unwrap()
+        .to_bytes();
+    let proof: serde_json::Value = serde_json::from_slice(&body_live).unwrap();
+    assert_eq!(proof.get("verified").unwrap(), true);
+    assert_eq!(proof.get("leaf_index").unwrap(), 0);
+    assert!(proof.get("audit_path").and_then(|v| v.as_array()).is_some());
+}
+
+#[tokio::test]
+async fn test_serve_parsers_list() {
+    let state = setup_test_state();
+    let app = create_router(state);
+
+    let req = Request::builder()
+        .uri("/parsers")
+        .method("GET")
+        .body(Body::empty())
+        .unwrap();
+
+    let response = app.oneshot(req).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let parsers: Vec<serde_json::Value> = serde_json::from_slice(&body).unwrap();
+
+    assert!(!parsers.is_empty());
+    let has_cisco = parsers
+        .iter()
+        .any(|p| p.get("vendor").unwrap() == "cisco_asa");
+    let has_forti = parsers
+        .iter()
+        .any(|p| p.get("vendor").unwrap() == "fortigate");
+    assert!(has_cisco && has_forti);
+}
+
+#[tokio::test]
+async fn test_serve_parsers_test_dry_run() {
+    let state = setup_test_state();
+    let app = create_router(state);
+
+    let test_log = "<166>Sep 21 14:00:01 asa-core-fw %ASA-6-302013: Built outbound TCP connection 1000672 for outside:203.0.113.54/25 to inside:10.1.6.180/52369";
+    let payload = serde_json::json!({
+        "raw_log": test_log,
+        "vendor": "cisco_asa"
+    });
+
+    let req = Request::builder()
+        .uri("/parsers/test")
+        .method("POST")
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(serde_json::to_vec(&payload).unwrap()))
+        .unwrap();
+
+    let response = app.oneshot(req).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let res: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+    assert_eq!(res.get("matched").unwrap(), true);
+    assert_eq!(res.get("vendor").unwrap(), "cisco_asa");
+    assert!(res.get("parsed_ocsf").is_some());
+    assert!(res.get("raw_hash").is_some());
+}
+
+#[tokio::test]
+async fn test_serve_onboard_safety_and_persistence() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let root = repo_root();
+    let state = AppState::new(
+        root.join("data/parquet"),
+        root.join("data/ledger.jsonl"),
+        temp_dir.path().to_path_buf(),
+        root.join("eval_hardcore_report.md"),
+    );
+
+    let sample_lines = vec![
+        "RT_FLOW: RT_FLOW_SESSION_CREATE: session created 192.168.10.55/49152->10.0.0.1/443 None None 6 sample-policy trust untrust 12345 N/A(N/A) ge-0/0/0.0",
+        "RT_FLOW: RT_FLOW_SESSION_CLOSE: session closed TCP FIN: 192.168.10.55/49152->10.0.0.1/443 None None 6 sample-policy trust untrust 12345 540(3200) 12(8) 15 UNKNOWN N/A(N/A) ge-0/0/0.0",
+        "RT_FLOW: RT_FLOW_SESSION_DENY: session denied 192.168.20.100/53211->172.16.0.5/22 None None 6 block-ssh untrust dmz 12346 N/A(N/A) ge-0/0/1.0",
+    ];
+
+    // 1. With confirm: false (preview mode, NO files written)
+    let app = create_router(state.clone());
+    let preview_payload = serde_json::json!({
+        "vendor": "juniper_preview_fw",
+        "device_model": "srx-340",
+        "sample_lines": sample_lines,
+        "confirm": false
+    });
+
+    let req1 = Request::builder()
+        .uri("/onboard")
+        .method("POST")
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(serde_json::to_vec(&preview_payload).unwrap()))
+        .unwrap();
+
+    let resp1 = app.oneshot(req1).await.unwrap();
+    assert_eq!(resp1.status(), StatusCode::OK);
+
+    let body1 = resp1.into_body().collect().await.unwrap().to_bytes();
+    let res1: serde_json::Value = serde_json::from_slice(&body1).unwrap();
+    assert_eq!(res1.get("status").unwrap(), "preview");
+    assert_eq!(res1.get("persisted").unwrap(), false);
+    assert!(
+        !temp_dir.path().join("juniper_preview_fw.json").exists(),
+        "Preview mode must NOT create files on disk"
+    );
+
+    // 2. With confirm: true (persisted and hot-loaded)
+    let app2 = create_router(state);
+    let confirm_payload = serde_json::json!({
+        "vendor": "juniper_persisted_fw",
+        "device_model": "srx-340",
+        "sample_lines": sample_lines,
+        "confirm": true
+    });
+
+    let req2 = Request::builder()
+        .uri("/onboard")
+        .method("POST")
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(serde_json::to_vec(&confirm_payload).unwrap()))
+        .unwrap();
+
+    let resp2 = app2.oneshot(req2).await.unwrap();
+    assert_eq!(resp2.status(), StatusCode::CREATED);
+
+    let body2 = resp2.into_body().collect().await.unwrap().to_bytes();
+    let res2: serde_json::Value = serde_json::from_slice(&body2).unwrap();
+    assert_eq!(res2.get("status").unwrap(), "hot_loaded");
+    assert_eq!(res2.get("persisted").unwrap(), true);
+    assert!(
+        temp_dir.path().join("juniper_persisted_fw.json").exists(),
+        "Confirmed onboarding must create .json file on disk"
+    );
+    assert!(
+        temp_dir.path().join("juniper_persisted_fw.yaml").exists(),
+        "Confirmed onboarding must create .yaml file on disk"
+    );
+}
+
+#[tokio::test]
+async fn test_serve_tamper_drill_isolation() {
+    let root = repo_root();
+    let temp_scratch = tempfile::tempdir().unwrap();
+
+    let state = AppState {
+        parquet_dir: root.join("data/parquet"),
+        ledger_path: root.join("data/ledger.jsonl"),
+        parsers_dir: root.join("data/parsers"),
+        eval_report_path: root.join("eval_hardcore_report.md"),
+        scratch_dir: temp_scratch.path().to_path_buf(),
+        registry: std::sync::Arc::new(tokio::sync::RwLock::new(
+            ulpf_ai::onboarder::DynamicParserRegistry::new(),
+        )),
+        alerts: std::sync::Arc::new(tokio::sync::RwLock::new(Vec::new())),
+        start_time: std::time::Instant::now(),
+        mock_eps: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(140000)),
+    };
+
+    let original_block1_bytes =
+        std::fs::read(root.join("data/parquet/block_00001.parquet")).unwrap();
+
+    // 1. confirm: false -> preview mode
+    let app1 = create_router(state.clone());
+    let req1 = Request::builder()
+        .uri("/tamper/drill")
+        .method("POST")
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(
+            serde_json::to_vec(&serde_json::json!({
+                "block_id": 1,
+                "leaf_index": 0,
+                "spoofed_ip": "10.99.99.99",
+                "confirm": false
+            }))
+            .unwrap(),
+        ))
+        .unwrap();
+
+    let resp1 = app1.oneshot(req1).await.unwrap();
+    assert_eq!(resp1.status(), StatusCode::OK);
+    let body1 = resp1.into_body().collect().await.unwrap().to_bytes();
+    let res1: serde_json::Value = serde_json::from_slice(&body1).unwrap();
+    assert_eq!(res1.get("executed").unwrap(), false);
+
+    // 2. confirm: true -> executed on clone
+    let app2 = create_router(state);
+    let req2 = Request::builder()
+        .uri("/tamper/drill")
+        .method("POST")
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(
+            serde_json::to_vec(&serde_json::json!({
+                "block_id": 1,
+                "leaf_index": 0,
+                "spoofed_ip": "10.99.99.99",
+                "confirm": true
+            }))
+            .unwrap(),
+        ))
+        .unwrap();
+
+    let resp2 = app2.oneshot(req2).await.unwrap();
+    assert_eq!(resp2.status(), StatusCode::OK);
+    let body2 = resp2.into_body().collect().await.unwrap().to_bytes();
+    let res2: serde_json::Value = serde_json::from_slice(&body2).unwrap();
+    assert_eq!(res2.get("executed").unwrap(), true);
+    assert_eq!(res2.get("status").unwrap(), "tamper_detected");
+
+    // CRITICAL: Ensure original evidence file was 100% UNTOUCHED
+    let current_block1_bytes =
+        std::fs::read(root.join("data/parquet/block_00001.parquet")).unwrap();
+    assert_eq!(
+        original_block1_bytes, current_block1_bytes,
+        "Original evidence block was modified! Tamper drill must NEVER touch original evidence!"
+    );
+
+    // Ensure the clone in scratch was modified and detected
+    let drill_clone = temp_scratch.path().join("tamper_drill_block_00001.parquet");
+    assert!(drill_clone.exists(), "Clone file in scratch must exist");
+}
+
+#[tokio::test]
+async fn test_serve_export_bundle() {
+    let state = setup_test_state();
+    let app = create_router(state);
+
+    let req = Request::builder()
+        .uri("/export/bundle/1")
+        .method("GET")
+        .body(Body::empty())
+        .unwrap();
+
+    let response = app.oneshot(req).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response.headers().get(header::CONTENT_TYPE).unwrap(),
+        "application/gzip"
+    );
+
+    let body_bytes = response.into_body().collect().await.unwrap().to_bytes();
+
+    // Decompress and verify tar contents
+    let gz = GzDecoder::new(&body_bytes[..]);
+    let mut archive = Archive::new(gz);
+
+    let mut entry_names = Vec::new();
+    for entry in archive.entries().unwrap() {
+        let mut entry = entry.unwrap();
+        let name = entry.path().unwrap().to_str().unwrap().to_string();
+        entry_names.push(name.clone());
+
+        if name == "README.txt" {
+            let mut content = String::new();
+            entry.read_to_string(&mut content).unwrap();
+            assert!(content.contains("ULPF COURTROOM EVIDENCE BUNDLE"));
+            assert!(content.contains("RFC 6962"));
+        }
+    }
+
+    assert!(entry_names.contains(&"README.txt".to_string()));
+    assert!(entry_names.contains(&"block_00001.parquet".to_string()));
+    assert!(entry_names.contains(&"ledger_entry.json".to_string()));
+    assert!(entry_names.contains(&"SHA256SUMS".to_string()));
+}
+
+#[tokio::test]
+async fn test_serve_protocol_invariance_http2_http3() {
+    let state = setup_test_state();
+    let app = create_router(state);
+
+    // Test 1: HTTP/1.1 log
+    let http1_log = r#"date=2026-09-21 time=14:00:08 devname="FGT" srcip=192.168.1.10 srcport=22520 dstip=203.0.113.28 dstport=80 proto=6 action="accept" app="HTTP""#;
+    let req1 = Request::builder()
+        .uri("/parsers/test")
+        .method("POST")
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(
+            serde_json::to_vec(&serde_json::json!({
+                "raw_log": http1_log,
+                "vendor": "fortigate"
+            }))
+            .unwrap(),
+        ))
+        .unwrap();
+
+    let resp1 = app.oneshot(req1).await.unwrap();
+    assert_eq!(resp1.status(), StatusCode::OK);
+    let body1 = resp1.into_body().collect().await.unwrap().to_bytes();
+    let res1: serde_json::Value = serde_json::from_slice(&body1).unwrap();
+    assert_eq!(res1.get("matched").unwrap(), true);
+    assert_eq!(res1.get("protocol_detected").unwrap(), "HTTP/1.1 (TCP)");
+
+    // Test 2: HTTP/2 log
+    let app2 = create_router(setup_test_state());
+    let http2_log = r#"date=2026-09-21 time=14:00:10 devname="FGT" srcip=192.168.1.20 srcport=54321 dstip=203.0.113.28 dstport=443 proto=6 action="accept" app="HTTP2""#;
+    let req2 = Request::builder()
+        .uri("/parsers/test")
+        .method("POST")
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(
+            serde_json::to_vec(&serde_json::json!({
+                "raw_log": http2_log,
+                "vendor": "fortigate"
+            }))
+            .unwrap(),
+        ))
+        .unwrap();
+
+    let resp2 = app2.oneshot(req2).await.unwrap();
+    assert_eq!(resp2.status(), StatusCode::OK);
+    let body2 = resp2.into_body().collect().await.unwrap().to_bytes();
+    let res2: serde_json::Value = serde_json::from_slice(&body2).unwrap();
+    assert_eq!(res2.get("matched").unwrap(), true);
+    assert_eq!(res2.get("protocol_detected").unwrap(), "HTTP/2 (TCP)");
+
+    // Test 3: HTTP/3 / QUIC log (over UDP proto 17)
+    let app3 = create_router(setup_test_state());
+    let http3_log = r#"date=2026-09-21 time=14:00:12 devname="FGT" srcip=192.168.1.30 srcport=61234 dstip=203.0.113.28 dstport=443 proto=17 action="accept" app="HTTP3" service="QUIC""#;
+    let req3 = Request::builder()
+        .uri("/parsers/test")
+        .method("POST")
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(
+            serde_json::to_vec(&serde_json::json!({
+                "raw_log": http3_log,
+                "vendor": "fortigate"
+            }))
+            .unwrap(),
+        ))
+        .unwrap();
+
+    let resp3 = app3.oneshot(req3).await.unwrap();
+    assert_eq!(resp3.status(), StatusCode::OK);
+    let body3 = resp3.into_body().collect().await.unwrap().to_bytes();
+    let res3: serde_json::Value = serde_json::from_slice(&body3).unwrap();
+    assert_eq!(res3.get("matched").unwrap(), true);
+    assert_eq!(
+        res3.get("protocol_detected").unwrap(),
+        "HTTP/3 (QUIC / UDP)"
+    );
+}
+
+#[tokio::test]
+async fn test_serve_get_system() {
+    let state = setup_test_state();
+    let app = create_router(state);
+
+    let req = Request::builder()
+        .uri("/system")
+        .method("GET")
+        .body(Body::empty())
+        .unwrap();
+
+    let response = app.oneshot(req).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+    assert_eq!(json.get("air_gapped").unwrap(), true);
+    assert!(json.get("batcher").is_some());
+    assert!(json.get("ingest_queue_capacity").is_some());
+}
