@@ -2,7 +2,7 @@
 
 > **For Frontend Developers (Issues #13, #14, #15)**  
 > This document specifies all HTTP REST API endpoints provided by `ulpf serve`.  
-> You can code your frontend pages directly against these specifications using the checked-in sample mock JSON fixtures located at [`data/fixtures/api/`](file:///home/human/logs_porjV2/layaRustparser/data/fixtures/api).
+> You can code your frontend pages directly against these specifications using the checked-in sample mock JSON fixtures located at [`data/fixtures/api/`](../data/fixtures/api).
 
 ---
 
@@ -11,6 +11,8 @@
 ### Starting the Backend
 Run from the repository root:
 ```bash
+./target/release/ulpf serve --port 8080
+# Or bind to all interfaces for remote/Docker access:
 ./target/release/ulpf serve --port 8080 --host 0.0.0.0
 ```
 - **Base URL**: `http://localhost:8080` (or `http://127.0.0.1:8080`)
@@ -24,9 +26,9 @@ Run from the repository root:
 
 | Page / Issue | Relevant Endpoints | Mock Fixture File |
 | :--- | :--- | :--- |
-| **#13 Analyst Dashboard** | `GET /metrics`<br>`GET /alerts` | [`data/fixtures/api/metrics.json`](file:///home/human/logs_porjV2/layaRustparser/data/fixtures/api/metrics.json)<br>[`data/fixtures/api/alerts.json`](file:///home/human/logs_porjV2/layaRustparser/data/fixtures/api/alerts.json) |
-| **#14 Investigation & Courtroom Export** | `GET /blocks`<br>`GET /blocks/:id/records`<br>`GET /prove/:block/:leaf`<br>`GET /export/bundle/:id` | [`data/fixtures/api/blocks.json`](file:///home/human/logs_porjV2/layaRustparser/data/fixtures/api/blocks.json)<br>[`data/fixtures/api/records_block_1.json`](file:///home/human/logs_porjV2/layaRustparser/data/fixtures/api/records_block_1.json)<br>[`data/fixtures/api/prove_501.json`](file:///home/human/logs_porjV2/layaRustparser/data/fixtures/api/prove_501.json)<br>[`data/fixtures/api/prove_live.json`](file:///home/human/logs_porjV2/layaRustparser/data/fixtures/api/prove_live.json) |
-| **#15 Parser & Integrity Management** | `GET /parsers`<br>`POST /parsers/test`<br>`POST /onboard`<br>`POST /tamper/drill`<br>`GET /system` | [`data/fixtures/api/parsers.json`](file:///home/human/logs_porjV2/layaRustparser/data/fixtures/api/parsers.json)<br>[`data/fixtures/api/parsers_test.json`](file:///home/human/logs_porjV2/layaRustparser/data/fixtures/api/parsers_test.json)<br>[`data/fixtures/api/onboard_preview.json`](file:///home/human/logs_porjV2/layaRustparser/data/fixtures/api/onboard_preview.json)<br>[`data/fixtures/api/system.json`](file:///home/human/logs_porjV2/layaRustparser/data/fixtures/api/system.json) |
+| **#13 Analyst Dashboard** | `GET /metrics`<br>`GET /alerts` | [`data/fixtures/api/metrics.json`](../data/fixtures/api/metrics.json)<br>[`data/fixtures/api/alerts.json`](../data/fixtures/api/alerts.json) |
+| **#14 Investigation & Courtroom Export** | `GET /blocks`<br>`GET /blocks/:id/records`<br>`GET /prove/:block/:leaf`<br>`GET /export/bundle/:id` | [`data/fixtures/api/blocks.json`](../data/fixtures/api/blocks.json)<br>[`data/fixtures/api/records_block_1.json`](../data/fixtures/api/records_block_1.json)<br>[`data/fixtures/api/prove_501.json`](../data/fixtures/api/prove_501.json)<br>[`data/fixtures/api/prove_live.json`](../data/fixtures/api/prove_live.json) |
+| **#15 Parser & Integrity Management** | `GET /parsers`<br>`POST /parsers/test`<br>`POST /onboard`<br>`POST /tamper/drill`<br>`GET /system` | [`data/fixtures/api/parsers.json`](../data/fixtures/api/parsers.json)<br>[`data/fixtures/api/parsers_test.json`](../data/fixtures/api/parsers_test.json)<br>[`data/fixtures/api/onboard_preview.json`](../data/fixtures/api/onboard_preview.json)<br>[`data/fixtures/api/system.json`](../data/fixtures/api/system.json) |
 
 ---
 

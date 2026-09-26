@@ -2,7 +2,7 @@
   "block_id": 1,
   "leaf_index": 0,
   "tree_size": 1000,
-  "leaf_hash": "23dfa4b126307137f68c7849cb16b9b329ad4148e6587c6778dc651f158db49f",
+  "leaf_hash": "bf242bcb35880d5a0c9fbbb8b3df79732672c6d1fdfdfbab75c01f5981317e9e",
   "calculated_merkle_root": "398e59a6304ea9fa83b3d9eb5f0739bf081a01ce4d34e30e5c320040fd9e69a8",
   "ledger_merkle_root": "398e59a6304ea9fa83b3d9eb5f0739bf081a01ce4d34e30e5c320040fd9e69a8",
   "verified": true,

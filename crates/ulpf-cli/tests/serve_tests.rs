@@ -473,7 +473,7 @@ async fn test_serve_export_bundle() {
 }
 
 #[tokio::test]
-async fn test_serve_protocol_invariance_http2_http3() {
+async fn test_serve_parser_log_protocol_normalization() {
     let state = setup_test_state();
     let app = create_router(state);
 
@@ -569,4 +569,93 @@ async fn test_serve_get_system() {
     assert_eq!(json.get("air_gapped").unwrap(), true);
     assert!(json.get("batcher").is_some());
     assert!(json.get("ingest_queue_capacity").is_some());
+}
+
+#[tokio::test]
+async fn test_serve_onboard_vendor_slug_traversal_sanitization() {
+    let root = repo_root();
+    let temp_dir = tempfile::tempdir().unwrap();
+    let state = AppState::new(
+        root.join("data/parquet"),
+        root.join("data/ledger.jsonl"),
+        temp_dir.path().to_path_buf(),
+        root.join("eval_hardcore_report.md"),
+    );
+    let parsers_dir = state.parsers_dir.clone();
+    let app = create_router(state);
+
+    let sample_lines = vec![
+        "RT_FLOW: RT_FLOW_SESSION_CREATE: session created 192.168.10.55/49152->10.0.0.1/443 None None 6 sample-policy trust untrust 12345 N/A(N/A) ge-0/0/0.0",
+        "RT_FLOW: RT_FLOW_SESSION_CLOSE: session closed TCP FIN: 192.168.10.55/49152->10.0.0.1/443 None None 6 sample-policy trust untrust 12345 540(3200) 12(8) 15 UNKNOWN N/A(N/A) ge-0/0/0.0",
+        "RT_FLOW: RT_FLOW_SESSION_DENY: session denied 192.168.20.100/53211->172.16.0.5/22 None None 6 block-ssh untrust dmz 12346 N/A(N/A) ge-0/0/1.0",
+    ];
+
+    let payload = serde_json::json!({
+        "vendor": "../../evil_traversal_vendor",
+        "device_model": "test-device",
+        "sample_lines": sample_lines,
+        "confirm": true
+    });
+
+    let req = Request::builder()
+        .uri("/onboard")
+        .method("POST")
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(serde_json::to_vec(&payload).unwrap()))
+        .unwrap();
+
+    let response = app.oneshot(req).await.unwrap();
+    assert_eq!(response.status(), StatusCode::CREATED);
+
+    // Verify no file escaped outside parsers_dir
+    let parent = parsers_dir.parent().unwrap();
+    assert!(!parent.join("evil_traversal_vendor.json").exists());
+    assert!(!parent.join("evil_traversal_vendor.yaml").exists());
+
+    // Verify file is contained safely inside parsers_dir
+    assert!(parsers_dir
+        .join("______evil_traversal_vendor.json")
+        .exists());
+    assert!(parsers_dir
+        .join("______evil_traversal_vendor.yaml")
+        .exists());
+}
+
+#[tokio::test]
+async fn test_serve_disposition_filter_strict() {
+    let state = setup_test_state();
+    let app = create_router(state);
+
+    let req = Request::builder()
+        .uri("/blocks/1/records?disposition=Allowed")
+        .method("GET")
+        .body(Body::empty())
+        .unwrap();
+
+    let response = app.oneshot(req).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let records = json.get("records").unwrap().as_array().unwrap();
+
+    for r in records {
+        let ocsf = r.get("ocsf").unwrap();
+        let disp = ocsf.get("disposition").and_then(|d| d.as_str()).unwrap();
+        assert_eq!(disp.to_lowercase(), "allowed");
+    }
+
+    // Now test with a non-matching disposition
+    let app2 = create_router(setup_test_state());
+    let req2 = Request::builder()
+        .uri("/blocks/1/records?disposition=NonExistentDisposition")
+        .method("GET")
+        .body(Body::empty())
+        .unwrap();
+
+    let response2 = app2.oneshot(req2).await.unwrap();
+    assert_eq!(response2.status(), StatusCode::OK);
+    let body2 = response2.into_body().collect().await.unwrap().to_bytes();
+    let json2: serde_json::Value = serde_json::from_slice(&body2).unwrap();
+    assert_eq!(json2.get("filtered_records_count").unwrap(), 0);
 }

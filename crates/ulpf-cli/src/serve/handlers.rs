@@ -255,9 +255,6 @@ pub async fn get_blocks(State(state): State<AppState>) -> Json<Vec<BlockItem>> {
                 // Determine audit status
                 let status = if !exists {
                     "FILE_MISSING".to_string()
-                } else if entry.block_id == 0 {
-                    // Intentionally tampered block in fixtures
-                    "FAIL".to_string()
                 } else if let Ok(report) = verify_block_with_ledger(&p, &state.ledger_path) {
                     if report.is_valid {
                         "PASS".to_string()
@@ -350,12 +347,15 @@ pub async fn get_block_records(
                 }
             }
             if let Some(ref disp) = query.disposition {
-                if let Ok(val) = serde_json::from_str::<serde_json::Value>(&r.ocsf_json) {
-                    if let Some(d) = val.get("disposition").and_then(|v| v.as_str()) {
-                        if !d.eq_ignore_ascii_case(disp) {
-                            return false;
-                        }
-                    }
+                let matches = serde_json::from_str::<serde_json::Value>(&r.ocsf_json)
+                    .ok()
+                    .and_then(|val| {
+                        val.get("disposition")
+                            .and_then(|v| v.as_str().map(|s| s.to_string()))
+                    })
+                    .is_some_and(|d| d.eq_ignore_ascii_case(disp));
+                if !matches {
+                    return false;
                 }
             }
             true
@@ -766,7 +766,21 @@ pub async fn post_onboard(
 
     // Persist parser to data/parsers/
     let _ = std::fs::create_dir_all(&state.parsers_dir);
-    let vendor_slug = payload.vendor.to_lowercase().replace(' ', "_");
+    let mut vendor_slug: String = payload
+        .vendor
+        .to_lowercase()
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || matches!(c, '_' | '-') {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    if vendor_slug.trim_matches('_').is_empty() {
+        vendor_slug = "custom_vendor".to_string();
+    }
     let json_file = format!("{}.json", vendor_slug);
     let yaml_file = format!("{}.yaml", vendor_slug);
 

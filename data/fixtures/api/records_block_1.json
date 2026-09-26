@@ -12,7 +12,7 @@
       "timestamp": 1789984478081,
       "vendor": "cisco_asa",
       "raw_log": "<166>Sep 21 14:00:01 asa-core-fw %ASA-6-302013: Built outbound TCP connection 1000672 for outside:203.0.113.54/25 (203.0.113.54/25) to inside:10.1.6.180/52369 (198.51.100.209/52369)",
-      "raw_hash": "23dfa4b126307137f68c7849cb16b9b329ad4148e6587c6778dc651f158db49f",
+      "raw_hash": "07adfbb9820f436aad9377b6e78d85a4bccc6cae8197c06622a7b6590bd3b081",
       "ocsf": {
         "activity_id": 1,
         "activity_name": "Open",
@@ -52,7 +52,7 @@
       "timestamp": 1789984478082,
       "vendor": "fortigate",
       "raw_log": "<189>date=2026-09-21 time=14:00:02 devname=\"FGT-DC-EDGE\" logid=\"0000000019\" type=\"traffic\" srcip=192.168.7.45 srcport=29853 dstip=203.0.113.46 dstport=53 proto=17 action=\"deny\"",
-      "raw_hash": "4a7b9c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b",
+      "raw_hash": "4b65ff82a3eb40ccb4d45f8203facb3f0b8f7e3071333a6187924ce3cb09caa0",
       "ocsf": {
         "activity_id": 3,
         "activity_name": "Traffic/Flow",

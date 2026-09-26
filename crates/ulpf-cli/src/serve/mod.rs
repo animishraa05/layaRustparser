@@ -20,7 +20,7 @@ pub struct ServeArgs {
     pub port: u16,
 
     /// Interface address to bind
-    #[arg(long, default_value = "0.0.0.0")]
+    #[arg(long, default_value = "127.0.0.1")]
     pub host: String,
 
     /// Directory for Parquet archive blocks

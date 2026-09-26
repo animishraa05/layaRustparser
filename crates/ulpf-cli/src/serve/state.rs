@@ -123,10 +123,13 @@ impl AppState {
                     let summary = if report.tampered_records.is_empty() {
                         report.summary.clone()
                     } else {
+                        let short_hash = report.tampered_records[0]
+                            .calculated_raw_hash
+                            .get(..16)
+                            .unwrap_or(&report.tampered_records[0].calculated_raw_hash);
                         format!(
                             "Corrupted record at leaf {}: calculated SHA-256 {} does not match stored hash.",
-                            report.tampered_records[0].leaf_index,
-                            &report.tampered_records[0].calculated_raw_hash[..16]
+                            report.tampered_records[0].leaf_index, short_hash
                         )
                     };
                     alerts.push(AlertItem {
