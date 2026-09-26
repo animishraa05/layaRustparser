@@ -392,3 +392,153 @@ fn preview_log(log: &str) -> String {
         format!("{}...", truncated)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::storage::StoredLogRecord;
+
+    fn make_records(n: usize) -> Vec<StoredLogRecord> {
+        (0..n)
+            .map(|i| {
+                let raw_log = format!("firewall-01 log line {i} src=192.168.1.{i}", i = i % 250);
+                let raw_hash = hex::encode(Sha256::digest(raw_log.as_bytes()));
+                StoredLogRecord {
+                    event_id: format!("event-{i:05}"),
+                    block_id: 0,
+                    leaf_index: i as u32,
+                    timestamp: 1_700_000_000 + i as i64,
+                    vendor: "test".to_string(),
+                    raw_log,
+                    raw_hash,
+                    ocsf_json: "{}".to_string(),
+                }
+            })
+            .collect()
+    }
+
+    fn ledger_for(records: &[StoredLogRecord]) -> LedgerEntry {
+        let tree = MerkleTree::from_raw_logs(records.iter().map(|r| r.raw_log.as_bytes()));
+        LedgerEntry {
+            block_id: 0,
+            timestamp: 1_700_000_000,
+            leaf_count: records.len(),
+            merkle_root: tree.root().to_hex(),
+            parquet_file: "test.parquet".to_string(),
+        }
+    }
+
+    #[test]
+    fn digests_match_serial_on_both_sides_of_threshold() {
+        // Serial path (below gate) and threaded path (above gate) must agree
+        // byte-for-byte with a plain serial SHA-256 pass.
+        for n in [
+            3,
+            PARALLEL_DIGEST_THRESHOLD - 1,
+            PARALLEL_DIGEST_THRESHOLD + 7,
+        ] {
+            let records = make_records(n);
+            let got = compute_digests(&records);
+            assert_eq!(got.len(), n);
+            for (digest, record) in got.iter().zip(records.iter()) {
+                assert_eq!(
+                    digest,
+                    &hex::encode(Sha256::digest(record.raw_log.as_bytes()))
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn digest_reused_for_reason_field_single_hash() {
+        // Regression for the old :269/:279 double hash: the reason payload
+        // must carry the same digest used for the mismatch check.
+        let mut records = make_records(16);
+        let entry = ledger_for(&records);
+        records[5].raw_log = "INJECTED MALICIOUS EVENT".to_string();
+
+        let report = verify_records(&records, &entry);
+        assert!(report.is_tampered());
+        assert_eq!(report.tampered_records.len(), 1);
+
+        let rec = &report.tampered_records[0];
+        let expected = hex::encode(Sha256::digest(records[5].raw_log.as_bytes()));
+        assert_eq!(rec.calculated_raw_hash, expected);
+        match &rec.reason {
+            TamperReason::DigestMismatch {
+                stored_hash,
+                calculated_hash,
+            } => {
+                assert_eq!(stored_hash, &records[5].raw_hash);
+                assert_eq!(calculated_hash, &expected);
+                assert_eq!(calculated_hash, &rec.calculated_raw_hash);
+            }
+            other => panic!("expected DigestMismatch, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn tampered_order_deterministic_under_threading() {
+        // Above the thread gate, chunk write-back must keep report order
+        // identical run after run (contract for CLI + frontend #13c).
+        let n = PARALLEL_DIGEST_THRESHOLD * 2 + 176;
+        assert!(n >= PARALLEL_DIGEST_THRESHOLD);
+        let mut records = make_records(n);
+        let entry = ledger_for(&records);
+        for idx in [3, 511, 512, 513, 1000, n - 1] {
+            records[idx].raw_log.push_str(" TAMPERED");
+        }
+
+        let first = verify_records(&records, &entry);
+        assert_eq!(first.tampered_records.len(), 6);
+        let order: Vec<u32> = first
+            .tampered_records
+            .iter()
+            .map(|r| r.leaf_index)
+            .collect();
+        assert_eq!(order, vec![3, 511, 512, 513, 1000, (n - 1) as u32]);
+
+        for _ in 0..5 {
+            let again = verify_records(&records, &entry);
+            assert_eq!(again, first, "threaded verify must be deterministic");
+        }
+
+        // format_alert must enumerate in the same stable order.
+        let alert = first.format_alert();
+        let mut last = 0;
+        for idx in [3, 511, 512, 513, 1000, n - 1] {
+            let needle = format!("Leaf #{idx}");
+            let pos = alert.find(&needle).expect("alert lists every record");
+            assert!(pos >= last, "alert order must follow record order");
+            last = pos;
+        }
+    }
+
+    #[test]
+    fn merkle_gate_only_when_no_row_findings() {
+        // Attacker rewrites raw_hash to match: no row findings, so the :294
+        // gate must emit exactly one MerkleRootMismatch.
+        let mut records = make_records(25);
+        let entry = ledger_for(&records);
+        records[5].raw_log = "INJECTED MALICIOUS EVENT".to_string();
+        records[5].raw_hash = hex::encode(Sha256::digest(records[5].raw_log.as_bytes()));
+
+        let report = verify_records(&records, &entry);
+        assert!(report.is_tampered());
+        assert_eq!(report.tampered_records.len(), 1);
+        assert!(matches!(
+            report.tampered_records[0].reason,
+            TamperReason::MerkleRootMismatch { .. }
+        ));
+    }
+
+    #[test]
+    fn clean_block_stays_valid() {
+        let records = make_records(64);
+        let entry = ledger_for(&records);
+        let report = verify_records(&records, &entry);
+        assert!(report.is_valid);
+        assert!(report.tampered_records.is_empty());
+        assert!(report.format_alert().starts_with("PASS"));
+    }
+}
