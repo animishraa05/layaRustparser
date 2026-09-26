@@ -89,8 +89,8 @@ impl LogQueue for MemoryQueue {
         let inner = &self.inner;
         let mut queue = inner.queue.lock().unwrap();
 
-        while queue.is_empty() {
-            queue = inner.not_empty.wait(queue).unwrap();
+        if queue.is_empty() {
+            return Vec::new();
         }
 
         let batch_size = std::cmp::min(max_batch_size, queue.len());
@@ -126,7 +126,6 @@ pub mod broker {
     use anyhow::Result;
     use bytes::Bytes;
     use std::sync::atomic::{AtomicU64, Ordering};
-    use std::sync::Arc;
 
     pub struct BrokerQueue {
         pushed: AtomicU64,
@@ -230,11 +229,10 @@ mod tests {
 
         let queue_clone = queue.clone();
         let handle = thread::spawn(move || {
-            thread::sleep(Duration::from_millis(50));
             queue_clone.push(Bytes::from("3")).unwrap();
         });
 
-        thread::sleep(Duration::from_millis(20));
+        thread::sleep(Duration::from_millis(50));
         let stats = queue.stats();
         assert!(stats.blocked > 0);
 
@@ -278,20 +276,16 @@ mod tests {
     }
 
     #[test]
-    fn test_memory_queue_empty_pop_waits() {
-        let queue = Arc::new(MemoryQueue::new(10, BackpressurePolicy::Block));
-        let queue_clone = queue.clone();
+    fn test_memory_queue_empty_pop_returns_empty() {
+        let queue = MemoryQueue::new(10, BackpressurePolicy::Block);
 
-        let handle = thread::spawn(move || {
-            thread::sleep(Duration::from_millis(50));
-            queue_clone.push(Bytes::from("data")).unwrap();
-        });
+        let batch = queue.pop_batch(1);
+        assert!(batch.is_empty());
 
+        queue.push(Bytes::from("data")).unwrap();
         let batch = queue.pop_batch(1);
         assert_eq!(batch.len(), 1);
         assert_eq!(batch[0], Bytes::from("data"));
-
-        handle.join().unwrap();
     }
 
     #[test]
