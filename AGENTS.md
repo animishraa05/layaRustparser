@@ -1,6 +1,6 @@
 # AGENTS.md — ULPF (Universal Log Pre-processing Framework)
 
-Compact agent handbook for this Rust workspace. `README.md` and `docs/` have full docs — but **some README CLI examples are stale, trust `ulpf --help`** (see Gotchas). There is **no CI, no pre-commit, no typecheck config**: the verification gate below is the only automated check.
+Compact agent handbook for this Rust workspace. `README.md` and `docs/` have full docs — but **some README CLI examples are stale, trust `ulpf --help`** (see Gotchas). There is **no pre-commit or typecheck config**; run the local verification gate before every commit, and CI mirrors it on push/PR (with documented skips like the known flaky benchmark test). If local and CI disagree, CI is authoritative for mergeability.
 
 ## Non-negotiable invariants
 
@@ -12,7 +12,7 @@ Compact agent handbook for this Rust workspace. `README.md` and `docs/` have ful
 
 ## Crate map
 
-Workspace of 5 crates (root `Cargo.toml`, edition 2021, no pinned toolchain — built on stable 1.96):
+Workspace of 5 crates (root `Cargo.toml`, edition 2021, pinned toolchain via `rust-toolchain.toml` to 1.96.0):
 
 | Crate | Role |
 | :--- | :--- |
@@ -27,10 +27,10 @@ Real entrypoints: `crates/ulpf-cli/src/main.rs`, `crates/ulpf-generator/src/main
 ## Commands (all verified locally)
 
 ```bash
-# Verification gate — run in this order before commit. There is no CI to catch you.
+# Verification gate — run in this order before every commit. CI mirrors this on push/PR (minus documented CI-only skips).
 cargo clippy --workspace --all-targets -- -A clippy::too_many_arguments -A clippy::field_reassign_with_default -D warnings
 cargo fmt --all -- --check
-cargo test --workspace        # ~124 tests and growing; ai/duel suites dominate runtime
+cargo test --workspace        # ~131 tests and growing; ai/duel suites dominate runtime
 
 # Focused runs
 cargo test -p ulpf-core --test parser_tests <test_name_substr>
