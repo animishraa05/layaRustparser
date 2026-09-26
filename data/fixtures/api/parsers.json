@@ -1,0 +1,44 @@
+[
+  {
+    "vendor": "cisco_asa",
+    "device_model": "ASA 5500-X / Firepower",
+    "parser_type": "native_extractor",
+    "status": "active",
+    "confidence_score": 1.0
+  },
+  {
+    "vendor": "fortigate",
+    "device_model": "FortiGate NGFW (v7.0+)",
+    "parser_type": "native_extractor",
+    "status": "active",
+    "confidence_score": 1.0
+  },
+  {
+    "vendor": "paloalto",
+    "device_model": "PAN-OS (PA-Series)",
+    "parser_type": "native_extractor",
+    "status": "active",
+    "confidence_score": 1.0
+  },
+  {
+    "vendor": "pfsense",
+    "device_model": "pfSense filterlog (IPv4/IPv6)",
+    "parser_type": "native_extractor",
+    "status": "active",
+    "confidence_score": 1.0
+  },
+  {
+    "vendor": "suricata",
+    "device_model": "Suricata EVE-JSON",
+    "parser_type": "native_extractor",
+    "status": "active",
+    "confidence_score": 1.0
+  },
+  {
+    "vendor": "cef",
+    "device_model": "Common Event Format (CEF:0)",
+    "parser_type": "native_extractor",
+    "status": "active",
+    "confidence_score": 1.0
+  }
+]
