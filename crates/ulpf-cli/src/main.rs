@@ -7,8 +7,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
+use bytes::Bytes;
 use clap::{Args, Parser, Subcommand, ValueEnum};
-use tokio::sync::mpsc;
 use tracing::{info, warn};
 use tracing_subscriber::EnvFilter;
 
@@ -16,6 +16,7 @@ use ulpf_ai::drain::{AlertSeverity, DrainConfig, DrainMiner};
 use ulpf_ai::evaluator::{load_sidecar_gt, EvaluatorEngine, GtOverrides};
 use ulpf_ai::onboarder::{DynamicParserRegistry, Onboarder};
 use ulpf_core::ingest::socket::{create_tcp_listener, create_udp_socket};
+use ulpf_core::ingest::{BackpressurePolicy, LogQueue, MemoryQueue};
 use ulpf_core::parser::UniversalParser;
 use ulpf_integrity::batcher::{BatchAccumulator, BatcherConfig, IncomingLog};
 use ulpf_integrity::storage::ParquetCompression;
@@ -313,7 +314,9 @@ async fn run_ingest(args: IngestArgs) -> Result<()> {
         compression: ParquetCompression::Snappy,
     };
 
-    let (raw_tx, mut raw_rx) = mpsc::channel::<String>(50_000);
+    let queue_capacity = 50_000;
+    let queue: Arc<dyn LogQueue> =
+        Arc::new(MemoryQueue::new(queue_capacity, BackpressurePolicy::Block));
     let total_ingested = Arc::new(AtomicU64::new(0));
     let total_parsed = Arc::new(AtomicU64::new(0));
     let total_blocks = Arc::new(AtomicU64::new(0));
@@ -322,7 +325,7 @@ async fn run_ingest(args: IngestArgs) -> Result<()> {
     // Spawn UDP Listener
     let udp_addr: SocketAddr = args.udp.parse().context("Invalid UDP address")?;
     let udp_socket = create_udp_socket(udp_addr, args.reuse_port)?;
-    let raw_tx_udp = raw_tx.clone();
+    let queue_udp = queue.clone();
     let total_ingested_udp = total_ingested.clone();
 
     tokio::spawn(async move {
@@ -330,12 +333,15 @@ async fn run_ingest(args: IngestArgs) -> Result<()> {
         loop {
             match udp_socket.recv_from(&mut buf).await {
                 Ok((size, _peer)) => {
-                    if let Ok(raw_str) = std::str::from_utf8(&buf[..size]) {
+                    let data = &buf[..size];
+                    if let Ok(raw_str) = std::str::from_utf8(data) {
                         for line in raw_str.lines() {
                             let trimmed = line.trim();
                             if !trimmed.is_empty() {
                                 total_ingested_udp.fetch_add(1, Ordering::Relaxed);
-                                if raw_tx_udp.send(trimmed.to_string()).await.is_err() {
+                                let owned: Bytes = trimmed.to_string().into();
+                                if let Err(e) = queue_udp.push(owned) {
+                                    warn!("UDP queue push error: {}", e);
                                     return;
                                 }
                             }
@@ -352,14 +358,14 @@ async fn run_ingest(args: IngestArgs) -> Result<()> {
     // Spawn TCP Listener
     let tcp_addr: SocketAddr = args.tcp.parse().context("Invalid TCP address")?;
     let tcp_listener = create_tcp_listener(tcp_addr, args.reuse_port, 1024)?;
-    let raw_tx_tcp = raw_tx.clone();
+    let queue_tcp = queue.clone();
     let total_ingested_tcp = total_ingested.clone();
 
     tokio::spawn(async move {
         loop {
             match tcp_listener.accept().await {
                 Ok((stream, _peer)) => {
-                    let tx = raw_tx_tcp.clone();
+                    let q = queue_tcp.clone();
                     let counter = total_ingested_tcp.clone();
                     tokio::spawn(async move {
                         let reader = tokio::io::BufReader::new(stream);
@@ -369,7 +375,9 @@ async fn run_ingest(args: IngestArgs) -> Result<()> {
                             let trimmed = line.trim();
                             if !trimmed.is_empty() {
                                 counter.fetch_add(1, Ordering::Relaxed);
-                                if tx.send(trimmed.to_string()).await.is_err() {
+                                let owned: Bytes = trimmed.to_string().into();
+                                if let Err(e) = q.push(owned) {
+                                    warn!("TCP queue push error: {}", e);
                                     break;
                                 }
                             }
@@ -495,31 +503,44 @@ async fn run_ingest(args: IngestArgs) -> Result<()> {
             Ok(())
         };
 
+        let batch_size = args.batch_size;
         loop {
             tokio::select! {
-                maybe = raw_rx.recv() => {
-                    match maybe {
-                        Some(raw_log) => process(raw_log)?,
-                        None => break, // every sender dropped
+                _ = tokio::time::sleep(Duration::from_millis(1)) => {
+                    let batch = queue.pop_batch(batch_size);
+                    for raw_log in batch {
+                        let bytes = raw_log.to_vec();
+                        let raw_str = std::str::from_utf8(&bytes).unwrap_or("");
+                        if !raw_str.is_empty() {
+                            process(raw_str.to_string())?;
+                        }
                     }
                 }
                 _ = shutdown.notified() => {
-                    info!("[ULPF] Shutdown signal: draining channel, flushing tail batch...");
+                    info!("[ULPF] Shutdown signal: draining queue, flushing tail batch...");
                     break;
                 }
             }
         }
 
         // Grace drain: packets in flight when the signal landed get up to
-        // ~500 ms to reach the channel before the final flush.
+        // ~500 ms to reach the queue before the final flush.
         let grace_end = Instant::now() + Duration::from_millis(500);
         loop {
-            match raw_rx.try_recv() {
-                Ok(raw_log) => process(raw_log)?,
-                Err(mpsc::error::TryRecvError::Empty) if Instant::now() < grace_end => {
-                    tokio::time::sleep(Duration::from_millis(10)).await;
+            let batch = queue.pop_batch(batch_size);
+            if batch.is_empty() {
+                if Instant::now() >= grace_end {
+                    break;
                 }
-                Err(_) => break,
+                tokio::time::sleep(Duration::from_millis(10)).await;
+                continue;
+            }
+            for raw_log in batch {
+                let bytes = raw_log.to_vec();
+                let raw_str = std::str::from_utf8(&bytes).unwrap_or("");
+                if !raw_str.is_empty() {
+                    process(raw_str.to_string())?;
+                }
             }
         }
     }

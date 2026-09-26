@@ -18,8 +18,13 @@ anyhow = { workspace = true }
 thiserror = { workspace = true }
 hex = { workspace = true }
 tracing = { workspace = true }
+bytes = { workspace = true }
 socket2 = { workspace = true }
 libc = { workspace = true }
+
+[features]
+default = []
+broker = []
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["full", "test-util"] }
