@@ -113,6 +113,15 @@ struct IngestArgs {
     /// Enable SO_REUSEPORT for high-concurrency multi-core socket binding
     #[arg(long, default_value_t = true)]
     reuse_port: bool,
+
+    /// Ingest queue capacity (messages) before backpressure kicks in
+    #[arg(long, default_value_t = 50_000)]
+    queue_capacity: usize,
+
+    /// Shed load instead of blocking when the queue is full (lossy;
+    /// default blocks to preserve the lossless provenance invariant)
+    #[arg(long, default_value_t = false)]
+    drop_on_full: bool,
 }
 
 #[derive(Args, Debug)]
@@ -298,6 +307,15 @@ async fn run_ingest(args: IngestArgs) -> Result<()> {
         "  Batch Trigger     : {} logs OR {} ms",
         args.batch_size, args.batch_timeout
     );
+    println!(
+        "  Queue             : capacity {} ({})",
+        args.queue_capacity,
+        if args.drop_on_full {
+            "drop-on-full"
+        } else {
+            "block-on-full"
+        }
+    );
     println!("  Taxonomy Standard : OCSF 1.3 (Class 4001 NetworkActivity)");
     println!("  Tamper-Evidence   : RFC 6962 Standard Merkle Tree");
     println!(
@@ -317,9 +335,14 @@ async fn run_ingest(args: IngestArgs) -> Result<()> {
         compression: ParquetCompression::Snappy,
     };
 
-    let queue_capacity = 50_000;
-    let queue: Arc<dyn LogQueue> =
-        Arc::new(MemoryQueue::new(queue_capacity, BackpressurePolicy::Block));
+    // Drop stays opt-in: the default Block policy preserves the lossless
+    // provenance invariant (no raw line is ever shed unless asked).
+    let policy = if args.drop_on_full {
+        BackpressurePolicy::Drop
+    } else {
+        BackpressurePolicy::Block
+    };
+    let queue: Arc<dyn LogQueue> = Arc::new(MemoryQueue::new(args.queue_capacity, policy));
     let total_ingested = Arc::new(AtomicU64::new(0));
     let total_parsed = Arc::new(AtomicU64::new(0));
     let total_blocks = Arc::new(AtomicU64::new(0));
