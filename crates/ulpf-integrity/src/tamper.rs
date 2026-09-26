@@ -178,6 +178,60 @@ impl TamperReport {
     }
 }
 
+/// Records below this count are hashed inline: spawning OS threads costs
+/// ~20-50us each, which outweighs SHA-256 (~1us/record) on small blocks.
+const PARALLEL_DIGEST_THRESHOLD: usize = 512;
+
+/// Maximum worker threads for the digest pass. SHA-256 is memory-bound on
+/// short log lines, so scaling flattens past a handful of cores.
+const MAX_DIGEST_THREADS: usize = 8;
+
+/// Hash every record's `raw_log` exactly once, returning digests in record
+/// order. Large blocks fan out across contiguous chunks via scoped threads;
+/// each worker writes back only its own chunk, so output order is
+/// deterministic regardless of thread scheduling.
+fn compute_digests(records: &[StoredLogRecord]) -> Vec<String> {
+    let n = records.len();
+    let mut digests: Vec<String> = vec![String::new(); n];
+    if n == 0 {
+        return digests;
+    }
+
+    if n < PARALLEL_DIGEST_THRESHOLD {
+        for (slot, record) in digests.iter_mut().zip(records.iter()) {
+            *slot = hex::encode(Sha256::digest(record.raw_log.as_bytes()));
+        }
+        return digests;
+    }
+
+    let requested = std::thread::available_parallelism().map_or(4, |p| p.get());
+    let num_threads = requested.min(MAX_DIGEST_THREADS).min(n).max(1);
+    if num_threads <= 1 {
+        for (slot, record) in digests.iter_mut().zip(records.iter()) {
+            *slot = hex::encode(Sha256::digest(record.raw_log.as_bytes()));
+        }
+        return digests;
+    }
+    let chunk_size = n.div_ceil(num_threads);
+
+    // Borrow checker: chunks_mut yields disjoint &mut slices, so each scoped
+    // worker owns its write range and no lock or atomic is needed.
+    std::thread::scope(|s| {
+        for (digest_chunk, record_chunk) in digests
+            .chunks_mut(chunk_size)
+            .zip(records.chunks(chunk_size))
+        {
+            s.spawn(move || {
+                for (slot, record) in digest_chunk.iter_mut().zip(record_chunk.iter()) {
+                    *slot = hex::encode(Sha256::digest(record.raw_log.as_bytes()));
+                }
+            });
+        }
+    });
+
+    digests
+}
+
 /// Verifies a Parquet block file against an explicitly provided `LedgerEntry`.
 pub fn verify_block_file(
     parquet_path: impl AsRef<Path>,
@@ -246,10 +300,13 @@ pub fn verify_records(records: &[StoredLogRecord], ledger_entry: &LedgerEntry) -
         });
     }
 
-    // 2. Validate individual records: sequence index and raw hash
-    for (i, record) in records.iter().enumerate() {
+    // 2. Validate individual records: sequence index and raw hash.
+    // Each raw_log is hashed exactly once up front (in parallel for large
+    // blocks); the digest below is reused for both the mismatch check and
+    // the TamperReason payload, so stored-vs-calculated can never disagree.
+    let digests = compute_digests(records);
+    for ((i, record), computed_digest) in records.iter().enumerate().zip(digests.iter()) {
         let expected_idx = i as u32;
-        let mut row_tampered = false;
 
         if record.leaf_index != expected_idx {
             tampered_records.push(TamperedRecord {
@@ -263,26 +320,21 @@ pub fn verify_records(records: &[StoredLogRecord], ledger_entry: &LedgerEntry) -
                     found_index: record.leaf_index,
                 },
             });
-            row_tampered = true;
         }
 
-        let computed_digest = hex::encode(Sha256::digest(record.raw_log.as_bytes()));
-        if computed_digest != record.raw_hash {
+        if computed_digest != &record.raw_hash {
             tampered_records.push(TamperedRecord {
                 leaf_index: record.leaf_index,
                 event_id: record.event_id.clone(),
                 stored_raw_hash: record.raw_hash.clone(),
-                calculated_raw_hash: computed_digest,
+                calculated_raw_hash: computed_digest.clone(),
                 raw_log_preview: preview_log(&record.raw_log),
                 reason: TamperReason::DigestMismatch {
                     stored_hash: record.raw_hash.clone(),
-                    calculated_hash: hex::encode(Sha256::digest(record.raw_log.as_bytes())),
+                    calculated_hash: computed_digest.clone(),
                 },
             });
-            row_tampered = true;
         }
-
-        let _ = row_tampered;
     }
 
     // 3. Rebuild RFC 6962 Merkle Tree from all raw logs
