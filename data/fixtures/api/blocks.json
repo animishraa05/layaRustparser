@@ -1,0 +1,32 @@
+[
+  {
+    "block_id": 0,
+    "timestamp": 1789984478063,
+    "leaf_count": 1000,
+    "merkle_root": "e12dfacf15b6cc84fcedf91aeb3119f7d8c7a638e2c7e9541b9bb02d12833b72",
+    "parquet_file": "block_00000.parquet",
+    "status": "FAIL",
+    "size_bytes": 345163,
+    "file_exists": true
+  },
+  {
+    "block_id": 1,
+    "timestamp": 1789984478081,
+    "leaf_count": 1000,
+    "merkle_root": "398e59a6304ea9fa83b3d9eb5f0739bf081a01ce4d34e30e5c320040fd9e69a8",
+    "parquet_file": "block_00001.parquet",
+    "status": "PASS",
+    "size_bytes": 425310,
+    "file_exists": true
+  },
+  {
+    "block_id": 2,
+    "timestamp": 1789984478100,
+    "leaf_count": 1000,
+    "merkle_root": "e2e66d040598d535418c173721a4a6cf369f17d217e46429bd941c3bea30f1a1",
+    "parquet_file": "block_00002.parquet",
+    "status": "UNAUDITED",
+    "size_bytes": 0,
+    "file_exists": false
+  }
+]

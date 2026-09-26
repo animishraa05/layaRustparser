@@ -718,3 +718,97 @@ fn test_p7_pfsense_ipv6_row() {
         hex::encode(Sha256::digest(raw.as_bytes()))
     );
 }
+
+// ============================================================================
+// P11 escape-hardening probes (RED first): CEF backslash escapes and
+// PAN-OS quoted-CSV fields. These record what the code does with hostile
+// but spec-legal punctuation; the fix follows.
+// ============================================================================
+
+#[test]
+fn test_cef_escaped_pipe_in_header() {
+    let parser = UniversalParser::new();
+    // CEF spec: `\|` inside a header field is a literal pipe, not a
+    // separator. The name field carries one here.
+    let raw = "CEF:0|Fortinet|FortiGate|v7.0.2|0000000019|traffic:forward\\|drop|3|src=192.168.1.146 spt=25297 dst=203.0.113.207 dpt=80 proto=6 act=accept";
+    let event = parser.parse(raw).expect("parse cef with escaped pipe");
+    let unmapped = event.unmapped.as_ref().expect("unmapped present");
+    assert_eq!(
+        unmapped.get("cef_name").map(String::as_str),
+        Some("traffic:forward|drop"),
+        "escaped pipe belongs to the name field"
+    );
+    assert_eq!(
+        unmapped.get("cef_severity").map(String::as_str),
+        Some("3"),
+        "severity must not shift into the name split"
+    );
+    assert_eq!(event.src_endpoint.ip.as_deref(), Some("192.168.1.146"));
+    assert_eq!(event.disposition, disposition::ALLOWED);
+    assert_eq!(
+        event.metadata.raw_hash,
+        hex::encode(Sha256::digest(raw.as_bytes()))
+    );
+}
+
+#[test]
+fn test_cef_escaped_equals_in_extension() {
+    let parser = UniversalParser::new();
+    // CEF spec: `\=` is a literal equals inside extension values.
+    let raw = "CEF:0|Fortinet|FortiGate|v7.0.2|0000000019|traffic:forward|3|msg=allow\\=yes src=192.168.1.146 spt=25297 dst=203.0.113.207 dpt=80 proto=6 act=accept";
+    let event = parser.parse(raw).expect("parse cef with escaped equals");
+    let unmapped = event.unmapped.as_ref().expect("unmapped present");
+    assert_eq!(
+        unmapped.get("msg").map(String::as_str),
+        Some("allow=yes"),
+        "escaped equals must unescape in the value"
+    );
+    assert_eq!(event.src_endpoint.ip.as_deref(), Some("192.168.1.146"));
+}
+
+#[test]
+fn test_multibyte_hostname_line_parses_without_panic() {
+    let parser = UniversalParser::new();
+    // 5-byte tag + 89 ASCII + '€' (bytes 94-96): the Tier-1 96-byte
+    // signature window ends inside the euro sign. Byte slicing there
+    // panics ("not a char boundary") — the hot path must not.
+    let raw = format!(
+        "<166>{}€ %ASA-6-302013: Built inbound TCP connection 1004583 for outside:203.0.113.57/80 to inside:10.1.13.22/80",
+        "A".repeat(89)
+    );
+    // NOTE: `parse_cached` — the plain `parse` bypasses the Tier-1 LRU.
+    let event = parser
+        .parse_cached(&raw)
+        .expect("multibyte prefix must not panic the hot path");
+    assert_eq!(event.disposition, disposition::ALLOWED);
+    assert_eq!(event.src_endpoint.ip.as_deref(), Some("203.0.113.57"));
+    assert_eq!(
+        event.metadata.raw_hash,
+        hex::encode(Sha256::digest(raw.as_bytes()))
+    );
+}
+
+#[test]
+fn test_paloalto_quoted_csv_with_escaped_quotes() {
+    use ulpf_core::parser::extractors::split_csv;
+
+    // Unit contract: RFC-4180 `""` inside a quoted field is one literal
+    // quote — it must not toggle the in-quotes state.
+    assert_eq!(split_csv("a,\"b,c\",d"), vec!["a", "b,c", "d"]);
+    assert_eq!(split_csv("a,\"b\"\"c\",d"), vec!["a", "b\"c", "d"]);
+
+    // End to end: quoted app field with comma + doubled quotes must not
+    // shift every column after it (ports/protocol/action stay aligned).
+    let parser = UniversalParser::new();
+    let raw = "1,2023/10/15 10:20:30,001801000000,TRAFFIC,start,0,2023/10/15 10:20:30,192.168.1.50,203.0.113.25,192.168.1.50,203.0.113.25,allow-web,user1,,\"web, \"\"browsing\"\"\",vsys1,trust,untrust,ethernet1/2,ethernet1/1,log-forwarding,0,12345,1,54321,80,0,0,0x0,tcp,allow,1024,512,512,10,2023/10/15 10:20:30,15,any,0,1234567,0x0";
+    let event = parser.parse(raw).expect("parse pan-os quoted csv");
+    let unmapped = event.unmapped.as_ref().expect("unmapped present");
+    assert_eq!(
+        unmapped.get("application").map(String::as_str),
+        Some("web, \"browsing\""),
+        "quoted field keeps comma + unescaped quotes"
+    );
+    assert_eq!(event.src_endpoint.port, Some(54321));
+    assert_eq!(event.dst_endpoint.port, Some(80));
+    assert_eq!(event.disposition, disposition::ALLOWED);
+}

@@ -1,6 +1,6 @@
 # AGENTS.md — ULPF (Universal Log Pre-processing Framework)
 
-Compact agent handbook for this Rust workspace. `README.md` and `docs/` have full docs — but **some README CLI examples are stale, trust `ulpf --help`** (see Gotchas). There is **no CI, no pre-commit, no typecheck config**: the verification gate below is the only automated check.
+Compact agent handbook for this Rust workspace. `README.md` and `docs/` have full docs — but **some README CLI examples are stale, trust `ulpf --help`** (see Gotchas). There is **no pre-commit or typecheck config**; run the local verification gate before every commit, and CI mirrors it on PRs and on pushes except docs-only changes ignored by workflow `paths-ignore` (with documented skips like the known flaky benchmark test). If local and CI disagree, CI is authoritative for mergeability.
 
 ## Non-negotiable invariants
 
@@ -9,10 +9,11 @@ Compact agent handbook for this Rust workspace. `README.md` and `docs/` have ful
 3. **Action inviolability:** security actions (`ALLOW`/`PERMIT`/`ACCEPT` vs `DENY`/`DROP`/`BLOCK`/`REJECT`) must never merge into one template cluster. Anchor tokens are enforced in `crates/ulpf-ai/src/drain.rs` and tested in `crates/ulpf-ai/tests/ai_tests.rs::test_drain_unique_event_patterns_anchor_tokens`.
 4. **Zero-copy hot path:** parsing/ingestion uses `&[u8]`/`&str` slices; no `to_string()`/`format!`/`String::from` on per-packet paths.
 5. **Tier-3 stays out-of-band:** novel-cluster triage runs over bounded `crossbeam-channel`s and must never block line-rate ingest.
+6. **Out-of-band serve plane:** `ulpf serve` provides an air-gapped HTTP/1.1 REST API for UI/SIEM (analyst dashboard, investigation, parser management). It queries immutable ledger and Parquet files directly out-of-band and never touches the line-rate ingest hot path. Default bind is loopback (`127.0.0.1:8080`) with CORS strictly scoped to local origins (`localhost`, `127.0.0.1`).
 
 ## Crate map
 
-Workspace of 5 crates (root `Cargo.toml`, edition 2021, no pinned toolchain — built on stable 1.96):
+Workspace of 5 crates (root `Cargo.toml`, edition 2021, pinned toolchain via `rust-toolchain.toml` to 1.96.0):
 
 | Crate | Role |
 | :--- | :--- |
@@ -20,17 +21,17 @@ Workspace of 5 crates (root `Cargo.toml`, edition 2021, no pinned toolchain — 
 | `crates/ulpf-integrity` | RFC 6962 Merkle tree, dual-trigger batcher (1,000 events / 2,000 ms), Parquet writer, tamper verifier |
 | `crates/ulpf-ai` | `DrainMiner`, `LayaDecisionEngine`, `Onboarder`, `TieredPipeline` (3-tier), `EvaluatorEngine` |
 | `crates/ulpf-generator` | Traffic blaster binary `ulpf-generator` |
-| `crates/ulpf-cli` | Binary `ulpf`; subcommands: `ingest`, `verify`, `onboard`, `benchmark`, `evaluate`, `scorecard`, `inspect`, `tamper` |
+| `crates/ulpf-cli` | Binary `ulpf`; subcommands: `ingest`, `verify`, `onboard`, `benchmark`, `evaluate`, `scorecard`, `inspect`, `tamper`, `serve` |
 
-Real entrypoints: `crates/ulpf-cli/src/main.rs`, `crates/ulpf-generator/src/main.rs`. Key wiring: `ulpf-ai/src/pipeline.rs` (Tier1 LRU → Tier2 Drain → Tier3 Laya), `ulpf-core/src/parser/mod.rs` (baseline `UniversalParser`), `ulpf-integrity/src/storage.rs` (Arrow schema: `event_id, block_id, leaf_index, timestamp, vendor, raw_log, raw_hash, ocsf_json`).
+Real entrypoints: `crates/ulpf-cli/src/main.rs`, `crates/ulpf-generator/src/main.rs`. Key wiring: `ulpf-ai/src/pipeline.rs` (Tier1 LRU → Tier2 Drain → Tier3 Laya), `ulpf-core/src/parser/mod.rs` (baseline `UniversalParser`), `ulpf-integrity/src/storage.rs` (Arrow schema: `event_id, block_id, leaf_index, timestamp, vendor, raw_log, raw_hash, ocsf_json`), `ulpf-cli/src/serve/mod.rs` (UI + SIEM HTTP/1.1 REST API).
 
 ## Commands (all verified locally)
 
 ```bash
-# Verification gate — run in this order before commit. There is no CI to catch you.
+# Verification gate — run in this order before every commit. CI mirrors this on push/PR (minus documented CI-only skips).
 cargo clippy --workspace --all-targets -- -A clippy::too_many_arguments -A clippy::field_reassign_with_default -D warnings
 cargo fmt --all -- --check
-cargo test --workspace        # ~124 tests and growing; ai/duel suites dominate runtime
+cargo test --workspace        # ~131 tests and growing; ai/duel suites dominate runtime
 
 # Focused runs
 cargo test -p ulpf-core --test parser_tests <test_name_substr>

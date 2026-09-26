@@ -34,13 +34,13 @@ impl PfSenseExtractor {
             ));
         }
 
-        let rule_num = fields[0];
-        let tracker = fields.get(3).unwrap_or(&"");
-        let interface = fields.get(4).unwrap_or(&"");
-        let reason = fields.get(5).unwrap_or(&"");
-        let action = fields.get(6).unwrap_or(&"");
-        let direction = fields.get(7).unwrap_or(&"");
-        let ip_version = fields.get(8).unwrap_or(&"4");
+        let rule_num = fields[0].as_ref();
+        let tracker = fields.get(3).map(|c| c.as_ref()).unwrap_or("");
+        let interface = fields.get(4).map(|c| c.as_ref()).unwrap_or("");
+        let reason = fields.get(5).map(|c| c.as_ref()).unwrap_or("");
+        let action = fields.get(6).map(|c| c.as_ref()).unwrap_or("");
+        let direction = fields.get(7).map(|c| c.as_ref()).unwrap_or("");
+        let ip_version = fields.get(8).map(|c| c.as_ref()).unwrap_or("4");
 
         let mut src_ip = None;
         let mut dst_ip = None;
@@ -49,7 +49,7 @@ impl PfSenseExtractor {
         let mut proto_num = None;
         let mut proto_name = None;
 
-        if *ip_version == "4" {
+        if ip_version == "4" {
             // IPv4 layout
             if fields.len() > 15 {
                 proto_num = fields[15].parse::<u8>().ok();
@@ -80,7 +80,7 @@ impl PfSenseExtractor {
                     dst_port = fields[21].parse::<u16>().ok().filter(|p| *p != 0);
                 }
             }
-        } else if *ip_version == "6" {
+        } else if ip_version == "6" {
             // IPv6 layout
             if fields.len() > 12 {
                 let name = fields[12].to_ascii_uppercase();

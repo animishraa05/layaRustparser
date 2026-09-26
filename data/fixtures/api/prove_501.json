@@ -1,0 +1,7 @@
+{
+  "error": "Not Implemented",
+  "code": 501,
+  "message": "Merkle inclusion proof endpoint is stubbed pending completion of #5 ([integrity/M] Ledger fsync + prove/consistency CLI). Pass '?live=true' to execute live RFC 6962 audit path computation.",
+  "block_id": 1,
+  "leaf_index": 0
+}

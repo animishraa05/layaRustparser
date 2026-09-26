@@ -1,4 +1,5 @@
 use chrono::Utc;
+use std::borrow::Cow;
 use std::collections::HashMap;
 
 use super::fortigate::KvTokenizer;
@@ -20,6 +21,60 @@ use crate::schema::ocsf::{
 ///   `accept|allow|allowed → Allowed`, `deny|denied|blocked|block → Blocked`,
 ///   `drop → Dropped`, `close|closed|timeout|client-rst|server-rst|reset →
 ///   Allowed (CLOSE)`.
+///
+// Private helpers below (header splitter + unescaper); the struct follows.
+/// Split a CEF header into its 7 `|`-separated fields + extension.
+///
+/// Per the CEF spec `\|` is a literal pipe inside a field, not a
+/// separator. Clean fields borrow from `input`; only fields containing
+/// `\` allocate.
+fn split_cef_header(input: &str) -> Vec<Cow<'_, str>> {
+    let mut parts = Vec::with_capacity(8);
+    let bytes = input.as_bytes();
+    let mut start = 0;
+    let mut i = 0;
+    let mut splits = 0;
+    while i < bytes.len() && splits < 7 {
+        if bytes[i] == b'\\' {
+            // Escaped char (e.g. `\|`): never a separator, skip both.
+            i += 2;
+            continue;
+        }
+        if bytes[i] == b'|' {
+            parts.push(unescape_cef(&input[start..i]));
+            start = i + 1;
+            splits += 1;
+        }
+        i += 1;
+    }
+    // Extension: the raw remainder (KvTokenizer handles its own escapes).
+    parts.push(Cow::Borrowed(&input[start..]));
+    parts
+}
+
+/// Unescape CEF `\| \= \\ \r \n`; unknown `\x` stays literal (no data
+/// loss). Clean slices borrow — the hot path allocates nothing.
+fn unescape_cef(s: &str) -> Cow<'_, str> {
+    if !s.contains('\\') {
+        return Cow::Borrowed(s);
+    }
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars();
+    while let Some(c) = chars.next() {
+        if c == '\\' {
+            match chars.next() {
+                Some('r') => out.push('\r'),
+                Some('n') => out.push('\n'),
+                Some(x) => out.push(x),
+                None => out.push('\\'),
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    Cow::Owned(out)
+}
+
 pub struct CefExtractor;
 
 impl CefExtractor {
@@ -34,15 +89,16 @@ impl CefExtractor {
             .find("CEF:")
             .ok_or_else(|| anyhow::anyhow!("Not a CEF record (no 'CEF:' header): {}", raw))?;
         let header_and_ext = &raw[cef_pos..];
-        let mut parts = header_and_ext.splitn(8, '|');
-        let _cef_version = parts.next().unwrap_or(""); // CEF:<version>
-        let vendor = parts.next().unwrap_or("").trim();
-        let product_name = parts.next().unwrap_or("").trim();
-        let device_version = parts.next().unwrap_or("").trim();
-        let signature_id = parts.next().unwrap_or("").trim();
-        let cef_name = parts.next().unwrap_or("").trim();
-        let severity = parts.next().unwrap_or("").trim();
-        let extension = parts.next().unwrap_or("");
+        let header = split_cef_header(header_and_ext);
+        let get = |i: usize| -> &str { header.get(i).map(|c| c.as_ref()).unwrap_or("") };
+        let _cef_version = get(0); // CEF:<version>
+        let vendor = get(1).trim();
+        let product_name = get(2).trim();
+        let device_version = get(3).trim();
+        let signature_id = get(4).trim();
+        let cef_name = get(5).trim();
+        let severity = get(6).trim();
+        let extension = get(7);
 
         let mut src_ip = None;
         let mut dst_ip = None;
@@ -56,7 +112,7 @@ impl CefExtractor {
         let mut unmapped: HashMap<String, String> = HashMap::new();
 
         for (key, val) in KvTokenizer::new(extension) {
-            let val = val.trim_matches('"');
+            let val = unescape_cef(val.trim_matches('"'));
             match key {
                 "src" => src_ip = Some(val.to_string()),
                 "dst" => dst_ip = Some(val.to_string()),

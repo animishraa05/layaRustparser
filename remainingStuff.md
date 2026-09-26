@@ -147,7 +147,7 @@ cargo build --release
 ./target/release/ulpf inspect --file data/parquet/block_00001.parquet --count 1
 ```
 
-**Warnings:** `scripts/run_demo.sh` deletes `data/parquet/` + `ledger.jsonl` (both tracked) — back up or `git checkout -- data/` after. `evaluate`/`benchmark` panic in debug (`-d` clash) — use release only. `populate_datasets.py` has hardcoded `/home/human/...` path — fix `OUT_DIR` first.
+**Warnings:** `scripts/run_demo.sh` is non-destructive (writes scratch `data/demo/`); `evaluate`/`benchmark` run in debug since P10.0 (release stays the intended eval mode); `populate_datasets.py` writes repo-relative (`ULPF_OUT_DIR` overrides).
 
 ---
 
@@ -155,5 +155,6 @@ cargo build --release
 
 - [x] Delete or archive 33 root `patch_*.py` / `fix_*.py` (done — deleted, were applied + untracked). Moved `Ulpf -1.pdf` → `docs/reference/Ulpf-proposal.pdf` (done).
 - [x] Consolidate `docs/`: kept latest `DETAILED_*` (has the theory-vs-flaws-vs-production walkthrough) as `docs/ARCHITECTURE_FINAL.md`; archived stale `ARCHITECTURE.md` + overlapping `SIH_EVALUATION_DOSSIER.md` + `SIMPLIFIED_*` to `docs/archive/` (done).
-- [ ] Move `Ulpf -1.pdf` → `docs/reference/`. Untrack generated PDFs or move to `docs/releases/`. Only one `*_template.html` should survive.
+- [x] Move `Ulpf -1.pdf` → `docs/reference/Ulpf-proposal.pdf` (done).
+- [ ] Untrack generated PDFs or move to `docs/releases/`. Only one `*_template.html` should survive (two still in `docs/`).
 - [ ] Untrack or relocate `eval_hardcore_report.md` (regenerated every run) → `docs/benchmarks/`.

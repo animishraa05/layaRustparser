@@ -5,6 +5,8 @@ pub mod paloalto;
 pub mod pfsense;
 pub mod suricata;
 
+use std::borrow::Cow;
+
 pub use cef::CefExtractor;
 pub use cisco_asa::CiscoAsaExtractor;
 pub use fortigate::FortigateExtractor;
@@ -48,28 +50,56 @@ pub fn protocol_name_from_num(num: u8) -> &'static str {
     }
 }
 
-/// Zero-copy CSV field tokenizer handling optional double quotes
-pub fn split_csv(input: &str) -> Vec<&str> {
+/// Zero-copy CSV field tokenizer handling optional double quotes.
+/// Clean fields borrow from `input`; only fields containing quotes
+/// allocate (RFC-4180 `""` collapses to one literal `"`).
+pub fn split_csv(input: &str) -> Vec<Cow<'_, str>> {
     let mut fields = Vec::with_capacity(48);
     let mut in_quotes = false;
+    let mut dirty = false;
     let mut start = 0;
     let bytes = input.as_bytes();
     let mut i = 0;
     while i < bytes.len() {
-        if bytes[i] == b'"' {
-            in_quotes = !in_quotes;
-        } else if bytes[i] == b',' && !in_quotes {
-            let field = &input[start..i];
-            fields.push(field.trim_matches('"').trim());
-            start = i + 1;
+        match bytes[i] {
+            b'"' if in_quotes && bytes.get(i + 1) == Some(&b'"') => {
+                // RFC-4180 escaped quote: literal, does NOT toggle state.
+                dirty = true;
+                i += 2;
+            }
+            b'"' => {
+                dirty = true;
+                in_quotes = !in_quotes;
+                i += 1;
+            }
+            b',' if !in_quotes => {
+                fields.push(finish_csv_field(&input[start..i], dirty));
+                start = i + 1;
+                dirty = false;
+                i += 1;
+            }
+            _ => i += 1,
         }
-        i += 1;
     }
-    if start <= input.len() {
-        let field = &input[start..];
-        fields.push(field.trim_matches('"').trim());
-    }
+    fields.push(finish_csv_field(&input[start..], dirty));
     fields
+}
+
+/// Clean slice borrows; quoted fields strip one wrapping pair, collapse
+/// `""`, and trim — mirroring the old `trim_matches('"').trim()` for
+/// well-formed input (including unterminated trailing quotes).
+fn finish_csv_field(raw: &str, dirty: bool) -> Cow<'_, str> {
+    if !dirty {
+        return Cow::Borrowed(raw.trim());
+    }
+    let mut t = raw.trim();
+    if let Some(s) = t.strip_prefix('"') {
+        t = s;
+    }
+    if let Some(s) = t.strip_suffix('"') {
+        t = s;
+    }
+    Cow::Owned(t.replace("\"\"", "\"").trim().to_string())
 }
 
 /// Parse date string "YYYY-MM-DD" and time string "HH:MM:SS" into epoch millis

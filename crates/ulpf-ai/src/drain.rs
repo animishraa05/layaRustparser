@@ -608,10 +608,9 @@ impl DrainMiner {
     fn kv_key(token: &str) -> Option<&str> {
         let key = if let Some(p) = token.find('=') {
             &token[..p]
-        } else if let Some(p) = token.find("\":") {
-            &token[..p]
         } else {
-            return None;
+            let p = token.find("\":")?;
+            &token[..p]
         };
         Some(key.trim_matches(|c: char| {
             c == '"' || c == '\'' || c == ',' || c == ';' || c.is_whitespace()
