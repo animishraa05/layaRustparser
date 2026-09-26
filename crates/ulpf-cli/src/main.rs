@@ -84,6 +84,8 @@ struct InspectArgs {
     count: usize,
 }
 
+/// Live Syslog ingest flags: where to listen, where to archive, and how the
+/// bounded queue between them behaves when producers outrun the consumer.
 #[derive(Args, Debug)]
 struct IngestArgs {
     /// UDP bind address for Syslog ingestion
@@ -113,6 +115,15 @@ struct IngestArgs {
     /// Enable SO_REUSEPORT for high-concurrency multi-core socket binding
     #[arg(long, default_value_t = true)]
     reuse_port: bool,
+
+    /// Ingest queue capacity (messages) before backpressure kicks in
+    #[arg(long, default_value_t = 50_000)]
+    queue_capacity: usize,
+
+    /// Shed load instead of blocking when the queue is full (lossy;
+    /// default blocks to preserve the lossless provenance invariant)
+    #[arg(long, default_value_t = false)]
+    drop_on_full: bool,
 }
 
 #[derive(Args, Debug)]
@@ -280,7 +291,29 @@ async fn main() -> Result<()> {
 // 1. INGESTION ENGINE
 // -----------------------------------------------------------------------------
 
+/// Reject ingest flag combinations that could never make progress. Today
+/// that is only a zero queue capacity: with block-on-full the first push
+/// would wait on a slot that can never free, hanging ingest at startup.
+fn validate_ingest_args(args: &IngestArgs) -> Result<()> {
+    if args.queue_capacity == 0 {
+        anyhow::bail!(
+            "--queue-capacity must be greater than 0 (got 0): \
+             zero capacity with block-on-full parks producers forever"
+        );
+    }
+    Ok(())
+}
+
+/// Run the live ingest pipeline: sockets → bounded queue → OCSF parse →
+/// Drain anomaly check → Merkle batching. SIGINT/SIGTERM drains the queue
+/// and flushes the tail batch; Block-policy producers parked at shutdown
+/// are released via `LogQueue::close` so the drain can finish.
 async fn run_ingest(args: IngestArgs) -> Result<()> {
+    // A zero capacity with the default Block policy would park every
+    // producer on the condvar forever, so fail fast before any socket,
+    // thread, or directory side effect.
+    validate_ingest_args(&args)?;
+
     println!(
         "\x1b[1;36m====================================================================\x1b[0m"
     );
@@ -297,6 +330,15 @@ async fn run_ingest(args: IngestArgs) -> Result<()> {
     println!(
         "  Batch Trigger     : {} logs OR {} ms",
         args.batch_size, args.batch_timeout
+    );
+    println!(
+        "  Queue             : capacity {} ({})",
+        args.queue_capacity,
+        if args.drop_on_full {
+            "drop-on-full"
+        } else {
+            "block-on-full"
+        }
     );
     println!("  Taxonomy Standard : OCSF 1.3 (Class 4001 NetworkActivity)");
     println!("  Tamper-Evidence   : RFC 6962 Standard Merkle Tree");
@@ -317,9 +359,14 @@ async fn run_ingest(args: IngestArgs) -> Result<()> {
         compression: ParquetCompression::Snappy,
     };
 
-    let queue_capacity = 50_000;
-    let queue: Arc<dyn LogQueue> =
-        Arc::new(MemoryQueue::new(queue_capacity, BackpressurePolicy::Block));
+    // Drop stays opt-in: the default Block policy preserves the lossless
+    // provenance invariant (no raw line is ever shed unless asked).
+    let policy = if args.drop_on_full {
+        BackpressurePolicy::Drop
+    } else {
+        BackpressurePolicy::Block
+    };
+    let queue: Arc<dyn LogQueue> = Arc::new(MemoryQueue::new(args.queue_capacity, policy));
     let total_ingested = Arc::new(AtomicU64::new(0));
     let total_parsed = Arc::new(AtomicU64::new(0));
     let total_blocks = Arc::new(AtomicU64::new(0));
@@ -399,6 +446,7 @@ async fn run_ingest(args: IngestArgs) -> Result<()> {
     let total_parsed_stats = total_parsed.clone();
     let total_blocks_stats = total_blocks.clone();
     let total_anom_stats = total_anomalies.clone();
+    let queue_stats = queue.clone();
 
     tokio::spawn(async move {
         let mut last_check = Instant::now();
@@ -412,6 +460,7 @@ async fn run_ingest(args: IngestArgs) -> Result<()> {
             let parsed = total_parsed_stats.load(Ordering::Relaxed);
             let blocks = total_blocks_stats.load(Ordering::Relaxed);
             let anomalies = total_anom_stats.load(Ordering::Relaxed);
+            let qs = queue_stats.stats();
 
             let diff = current.saturating_sub(last_count);
             let eps = if elapsed > 0.0 {
@@ -421,8 +470,8 @@ async fn run_ingest(args: IngestArgs) -> Result<()> {
             };
 
             println!(
-                "\x1b[32m[ULPF LIVE]\x1b[0m Ingest: \x1b[1;37m{:>7.0} EPS\x1b[0m | Total: \x1b[1;37m{:>8}\x1b[0m | Normalized OCSF: \x1b[1;32m{:>8}\x1b[0m | Blocks Anchored: \x1b[1;35m{:>4}\x1b[0m | Anomalies: \x1b[1;33m{:>3}\x1b[0m",
-                eps, current, parsed, blocks, anomalies
+                "\x1b[32m[ULPF LIVE]\x1b[0m Ingest: \x1b[1;37m{:>7.0} EPS\x1b[0m | Total: \x1b[1;37m{:>8}\x1b[0m | Normalized OCSF: \x1b[1;32m{:>8}\x1b[0m | Blocks Anchored: \x1b[1;35m{:>4}\x1b[0m | Anomalies: \x1b[1;33m{:>3}\x1b[0m | Queue: \x1b[1;37m{:>5} msgs / {:>8} bytes\x1b[0m | Dropped: \x1b[1;31m{} ({} bytes)\x1b[0m",
+                eps, current, parsed, blocks, anomalies, qs.current_len, qs.queued_bytes, qs.dropped, qs.dropped_bytes
             );
 
             last_check = now;
@@ -521,6 +570,10 @@ async fn run_ingest(args: IngestArgs) -> Result<()> {
                 }
                 _ = shutdown.notified() => {
                     info!("[ULPF] Shutdown signal: draining queue, flushing tail batch...");
+                    // Release any Block-policy producer parked on the full
+                    // queue before the grace drain, or the consumer below
+                    // could wait on a slot nobody will ever free.
+                    queue.close();
                     break;
                 }
             }
@@ -559,12 +612,31 @@ async fn run_ingest(args: IngestArgs) -> Result<()> {
             flush_res.parquet_path.display()
         );
     }
+    // One snapshot for the whole summary line: re-reading the counters per
+    // field could mix a pre-drain length with post-drain byte counts under
+    // in-flight pushes. The lossless claim only holds when nothing was
+    // shed — with drops, only the retained tail batch was flushed.
+    let qs = queue.stats();
+    let tail_note = if qs.dropped == 0 {
+        "tail batch flushed losslessly.".to_string()
+    } else {
+        format!(
+            "tail batch flushed; {} lines ({} bytes) were shed upstream under drop-on-full.",
+            qs.dropped, qs.dropped_bytes
+        )
+    };
     println!(
-        "\n\x1b[1;32m[ULPF SHUTDOWN]\x1b[0m Ingest: {} | Parsed: {} | Blocks: {} | Anomalies: {} \u{2014} tail batch flushed losslessly.",
+        "\n\x1b[1;32m[ULPF SHUTDOWN]\x1b[0m Ingest: {} | Parsed: {} | Blocks: {} | Anomalies: {} | Queue: {} msgs / {} bytes (peak {} bytes) | Dropped: {} ({} bytes) \u{2014} {}",
         total_ingested.load(Ordering::Relaxed),
         total_parsed.load(Ordering::Relaxed),
         total_blocks.load(Ordering::Relaxed),
         total_anomalies.load(Ordering::Relaxed),
+        qs.current_len,
+        qs.queued_bytes,
+        qs.high_water_bytes,
+        qs.dropped,
+        qs.dropped_bytes,
+        tail_note,
     );
 
     Ok(())
@@ -1330,4 +1402,38 @@ fn run_tamper(args: TamperArgs) -> Result<()> {
     );
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Build ingest flags with a chosen queue capacity (rest defaults).
+    fn ingest_args_with_capacity(queue_capacity: usize) -> IngestArgs {
+        IngestArgs {
+            udp: "0.0.0.0:5140".to_string(),
+            tcp: "0.0.0.0:5140".to_string(),
+            parquet_dir: PathBuf::from("data/parquet"),
+            ledger: PathBuf::from("data/ledger.jsonl"),
+            batch_size: 1000,
+            batch_timeout: 2000,
+            reuse_port: true,
+            queue_capacity,
+            drop_on_full: false,
+        }
+    }
+
+    #[test]
+    fn zero_queue_capacity_is_rejected() {
+        // Zero capacity + block-on-full parks the first producer forever,
+        // so validation must fail before any socket or queue is built.
+        let err = validate_ingest_args(&ingest_args_with_capacity(0)).unwrap_err();
+        assert!(err.to_string().contains("--queue-capacity"));
+    }
+
+    #[test]
+    fn positive_queue_capacity_is_accepted() {
+        validate_ingest_args(&ingest_args_with_capacity(1)).unwrap();
+        validate_ingest_args(&ingest_args_with_capacity(50_000)).unwrap();
+    }
 }
