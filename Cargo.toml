@@ -33,6 +33,6 @@ rand = "0.8"
 anyhow = "1.0"
 thiserror = "1.0"
 hex = "0.4"
-socket2 = { version = "0.5", features = ["all"] }
+socket2 = { version = "0.6", features = ["all"] }
 bytes = "1.0"
 libc = "0.2"
