@@ -16,8 +16,8 @@ Run from the repository root:
 ./target/release/ulpf serve --port 8080 --host 0.0.0.0
 ```
 - **Base URL**: `http://localhost:8080` (or `http://127.0.0.1:8080`)
-- **Wire Protocols Supported**: **HTTP/1.1** and **HTTP/2** (cleartext H2C).
-- **CORS**: Enabled by default for all origins (`*`) — your Next.js/React development server (e.g. `http://localhost:3000`) can make fetch calls directly without CORS proxy issues.
+- **Wire Protocols Supported**: **HTTP/1.1** (High-Performance REST). For production deployments requiring HTTP/2 or HTTPS, front with a local reverse proxy (Caddy / Nginx) terminating TLS with ALPN.
+- **CORS Policy**: Restricted strictly to loopback origins (`http://localhost:*`, `http://127.0.0.1:*`) — your Next.js/React development server (e.g. `http://localhost:3000`) can make fetch calls directly, while untrusted external web origins are rejected.
 - **Air-Gapped Guarantee**: The backend makes zero external network or cloud requests.
 
 ---
@@ -215,6 +215,9 @@ Allows SQL-like searching, filtering, and paging over columnar Parquet logs with
 ### 3.5 `GET /prove/:block/:leaf` — Merkle Inclusion Proof
 Generates the cryptographic RFC 6962 audit path proving that a specific raw log was batched into the block Merkle root.
 
+> [!WARNING]
+> **Forensic Stub Status**: This endpoint is intentionally a contract stub under Issue #12 criteria. Default calls return `501 Not Implemented`. While passing `?live=true` performs live RFC 6962 audit path reconstruction, full production-grade proof verification UI workflows are scheduled for Issue #14. Frontend teams must handle `501` gracefully.
+
 - **Method**: `GET`
 - **Path**: `/prove/{block}/{leaf}`
 - **Query Parameters**:
@@ -236,7 +239,7 @@ Generates the cryptographic RFC 6962 audit path proving that a specific raw log 
   "block_id": 1,
   "leaf_index": 0,
   "tree_size": 1000,
-  "leaf_hash": "23dfa4b126307137f68c7849cb16b9b329ad4148e6587c6778dc651f158db49f",
+  "leaf_hash": "bf242bcb35880d5a0c9fbbb8b3df79732672c6d1fdfdfbab75c01f5981317e9e",
   "calculated_merkle_root": "398e59a6304ea9fa83b3d9eb5f0739bf081a01ce4d34e30e5c320040fd9e69a8",
   "ledger_merkle_root": "398e59a6304ea9fa83b3d9eb5f0739bf081a01ce4d34e30e5c320040fd9e69a8",
   "verified": true,

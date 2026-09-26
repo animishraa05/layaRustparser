@@ -71,8 +71,8 @@ paths:
           description: Block not found
   /prove/{block}/{leaf}:
     get:
-      summary: RFC 6962 Merkle Inclusion Proof
-      description: Stubs with 501 by default per Issue #12 criteria; pass ?live=true for mathematical proof path.
+      summary: RFC 6962 Merkle Inclusion Proof (Stub / Preview)
+      description: Intentional contract stub returning 501 Not Implemented by default per Issue #12 criteria; pass ?live=true for preview audit path reconstruction. Full cryptographic proof verification workflows are scheduled for Issue #14.
       parameters:
         - name: block
           in: path
@@ -91,9 +91,9 @@ paths:
             default: false
       responses:
         '200':
-          description: Proof generated successfully
+          description: Preview proof generated successfully
         '501':
-          description: Endpoint stubbed pending #5
+          description: Contract stub response (501 Not Implemented per Issue #12, pending Issue #14)
   /export/bundle/{id}:
     get:
       summary: Courtroom Evidence Bundle Export

@@ -94,31 +94,29 @@ impl AppState {
             }
         }
 
-        let state = Self {
+        let initial_alerts = Self::compute_initial_alerts(&parquet_dir, &ledger_path);
+
+        Self {
             parquet_dir,
             ledger_path,
             parsers_dir,
             eval_report_path,
             scratch_dir,
             registry: Arc::new(RwLock::new(registry)),
-            alerts: Arc::new(RwLock::new(Vec::new())),
+            alerts: Arc::new(RwLock::new(initial_alerts)),
             start_time: Instant::now(),
             mock_eps: Arc::new(AtomicU64::new(142_500)),
-        };
-
-        // Seed initial alerts from known blocks
-        state.seed_initial_alerts();
-        state
+        }
     }
 
-    /// Automatically scans available blocks and seeds alerts (e.g. tamper alarms).
-    pub fn seed_initial_alerts(&self) {
+    /// Automatically scans available blocks and computes initial alerts (e.g. tamper alarms).
+    pub fn compute_initial_alerts(parquet_dir: &Path, ledger_path: &Path) -> Vec<AlertItem> {
         let mut alerts = Vec::new();
 
         // Audit block 0 if present (intentionally tampered fixture in repo)
-        let block_0 = self.parquet_dir.join("block_00000.parquet");
-        if block_0.exists() && self.ledger_path.exists() {
-            if let Ok(report) = verify_block_with_ledger(&block_0, &self.ledger_path) {
+        let block_0 = parquet_dir.join("block_00000.parquet");
+        if block_0.exists() && ledger_path.exists() {
+            if let Ok(report) = verify_block_with_ledger(&block_0, ledger_path) {
                 if !report.is_valid {
                     let summary = if report.tampered_records.is_empty() {
                         report.summary.clone()
@@ -169,11 +167,14 @@ impl AppState {
             leaf_index: Some(88),
         });
 
-        let alerts_ref = self.alerts.clone();
-        tokio::spawn(async move {
-            let mut lock = alerts_ref.write().await;
-            *lock = alerts;
-        });
+        alerts
+    }
+
+    /// Asynchronously re-seeds alerts from the current blocks.
+    pub async fn seed_initial_alerts(&self) {
+        let alerts = Self::compute_initial_alerts(&self.parquet_dir, &self.ledger_path);
+        let mut lock = self.alerts.write().await;
+        *lock = alerts;
     }
 
     /// Computes aggregated metrics from ledger and parquet blocks.

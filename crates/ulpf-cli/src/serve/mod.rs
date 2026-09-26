@@ -5,10 +5,11 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
+use axum::http::HeaderValue;
 use axum::routing::{get, post};
 use axum::Router;
 use clap::Args;
-use tower_http::cors::{Any, CorsLayer};
+use tower_http::cors::{AllowOrigin, CorsLayer};
 use tracing::info;
 
 pub use state::AppState;
@@ -42,11 +43,31 @@ pub struct ServeArgs {
 
 /// Constructs the complete Axum router with state and CORS.
 pub fn create_router(state: AppState) -> Router {
-    // Air-gapped CORS policy: allow local frontends (Next.js, React, Tauri, curl)
+    // Air-gapped CORS policy: strictly allow localhost and 127.0.0.1 origins
+    // to prevent malicious cross-origin websites from triggering mutating endpoints.
     let cors = CorsLayer::new()
-        .allow_origin(Any)
-        .allow_methods(Any)
-        .allow_headers(Any);
+        .allow_origin(AllowOrigin::predicate(|origin: &HeaderValue, _| {
+            if let Ok(s) = origin.to_str() {
+                s.starts_with("http://localhost:")
+                    || s.starts_with("http://127.0.0.1:")
+                    || s == "http://localhost"
+                    || s == "http://127.0.0.1"
+                    || s.starts_with("https://localhost:")
+                    || s.starts_with("https://127.0.0.1:")
+            } else {
+                false
+            }
+        }))
+        .allow_methods([
+            axum::http::Method::GET,
+            axum::http::Method::POST,
+            axum::http::Method::OPTIONS,
+        ])
+        .allow_headers([
+            axum::http::header::CONTENT_TYPE,
+            axum::http::header::AUTHORIZATION,
+            axum::http::header::ACCEPT,
+        ]);
 
     Router::new()
         // Core telemetry & alerts (#13 Dashboard)
@@ -83,7 +104,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     println!("  Parquet Archive   : {}", args.parquet_dir.display());
     println!("  Merkle Ledger     : {}", args.ledger.display());
     println!("  Parsers Registry  : {}", args.parsers_dir.display());
-    println!("  Wire Protocols    : HTTP/1.1 & HTTP/2 (Cleartext H2C)");
+    println!("  Wire Protocols    : HTTP/1.1 (High-Performance REST)");
     println!("  Environment       : 100% Air-Gapped (Zero Cloud/CDN Dependencies)");
     println!(
         "\x1b[1;36m--------------------------------------------------------------------\x1b[0m"

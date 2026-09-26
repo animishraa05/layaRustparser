@@ -659,3 +659,203 @@ async fn test_serve_disposition_filter_strict() {
     let json2: serde_json::Value = serde_json::from_slice(&body2).unwrap();
     assert_eq!(json2.get("filtered_records_count").unwrap(), 0);
 }
+
+#[tokio::test]
+async fn test_serve_cors_origin_enforcement() {
+    let state = setup_test_state();
+    let app = create_router(state);
+
+    // 1. Untrusted origin: http://evil.attacker.com must NOT receive Access-Control-Allow-Origin
+    let req_evil = Request::builder()
+        .uri("/metrics")
+        .method("GET")
+        .header("Origin", "http://evil.attacker.com")
+        .body(Body::empty())
+        .unwrap();
+
+    let resp_evil = app.oneshot(req_evil).await.unwrap();
+    assert_eq!(resp_evil.status(), StatusCode::OK);
+    assert!(
+        resp_evil
+            .headers()
+            .get("access-control-allow-origin")
+            .is_none(),
+        "Untrusted cross-origin requests must NOT be granted CORS access"
+    );
+
+    // 2. Preflight OPTIONS from evil origin must not receive allow-origin
+    let app_opt = create_router(setup_test_state());
+    let req_opt_evil = Request::builder()
+        .uri("/onboard")
+        .method("OPTIONS")
+        .header("Origin", "http://evil.attacker.com")
+        .header("Access-Control-Request-Method", "POST")
+        .body(Body::empty())
+        .unwrap();
+
+    let resp_opt_evil = app_opt.oneshot(req_opt_evil).await.unwrap();
+    assert!(
+        resp_opt_evil
+            .headers()
+            .get("access-control-allow-origin")
+            .is_none(),
+        "Preflight OPTIONS from untrusted origin must be rejected"
+    );
+
+    // 3. Trusted local origin: http://localhost:3000 (e.g. Next.js dashboard)
+    let app_local = create_router(setup_test_state());
+    let req_local = Request::builder()
+        .uri("/metrics")
+        .method("GET")
+        .header("Origin", "http://localhost:3000")
+        .body(Body::empty())
+        .unwrap();
+
+    let resp_local = app_local.oneshot(req_local).await.unwrap();
+    assert_eq!(resp_local.status(), StatusCode::OK);
+    assert_eq!(
+        resp_local
+            .headers()
+            .get("access-control-allow-origin")
+            .unwrap(),
+        "http://localhost:3000"
+    );
+
+    // 4. Trusted loopback origin: http://127.0.0.1:5173 (e.g. Vite UI)
+    let app_loopback = create_router(setup_test_state());
+    let req_loopback = Request::builder()
+        .uri("/metrics")
+        .method("GET")
+        .header("Origin", "http://127.0.0.1:5173")
+        .body(Body::empty())
+        .unwrap();
+
+    let resp_loopback = app_loopback.oneshot(req_loopback).await.unwrap();
+    assert_eq!(resp_loopback.status(), StatusCode::OK);
+    assert_eq!(
+        resp_loopback
+            .headers()
+            .get("access-control-allow-origin")
+            .unwrap(),
+        "http://127.0.0.1:5173"
+    );
+
+    // 5. Native non-browser requests without Origin (curl, CLI) must succeed normally
+    let app_native = create_router(setup_test_state());
+    let req_native = Request::builder()
+        .uri("/metrics")
+        .method("GET")
+        .body(Body::empty())
+        .unwrap();
+
+    let resp_native = app_native.oneshot(req_native).await.unwrap();
+    assert_eq!(resp_native.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn test_serve_state_initialization_deterministic() {
+    let root = repo_root();
+    let temp_dir = tempfile::tempdir().unwrap();
+
+    // 1. Verify AppState::new initializes synchronously without needing background task sleep
+    let state = AppState::new(
+        root.join("data/parquet"),
+        root.join("data/ledger.jsonl"),
+        temp_dir.path().to_path_buf(),
+        root.join("eval_hardcore_report.md"),
+    );
+
+    let alerts = state.alerts.read().await;
+    assert!(
+        !alerts.is_empty(),
+        "Alerts must be populated synchronously during AppState::new"
+    );
+    assert!(
+        alerts.iter().any(|a| a.alert_type == "tamper_alarm"),
+        "Tamper alarm for block 0 must be populated immediately"
+    );
+
+    // 2. Verify AppState::new can be called in a standard non-async thread without panic
+    let root_clone = root.clone();
+    let temp_path = temp_dir.path().to_path_buf();
+    let handle = std::thread::spawn(move || {
+        let s = AppState::new(
+            root_clone.join("data/parquet"),
+            root_clone.join("data/ledger.jsonl"),
+            temp_path,
+            root_clone.join("eval_hardcore_report.md"),
+        );
+        assert_eq!(
+            s.mock_eps.load(std::sync::atomic::Ordering::Relaxed),
+            142_500
+        );
+    });
+    handle
+        .join()
+        .expect("AppState::new must not panic in non-tokio thread");
+}
+
+#[tokio::test]
+async fn test_serve_live_tcp_listener_wire_http1() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::{TcpListener, TcpStream};
+
+    let state = setup_test_state();
+    let app = create_router(state);
+
+    // Bind real TCP socket on ephemeral port
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind ephemeral TCP port");
+    let local_addr = listener.local_addr().expect("get local addr");
+
+    // Spawn server in background
+    let server_task = tokio::spawn(async move {
+        let _ = axum::serve(listener, app).await;
+    });
+
+    // Connect via real TCP stream
+    let mut stream = TcpStream::connect(local_addr)
+        .await
+        .expect("connect to TCP listener");
+
+    // Send raw HTTP/1.1 wire protocol request
+    let wire_request = format!(
+        "GET /metrics HTTP/1.1\r\nHost: {}\r\nUser-Agent: ulpf-test-wire\r\nConnection: close\r\n\r\n",
+        local_addr
+    );
+    stream
+        .write_all(wire_request.as_bytes())
+        .await
+        .expect("write raw HTTP wire bytes");
+    stream.flush().await.expect("flush stream");
+
+    // Read full raw response
+    let mut response_bytes = Vec::new();
+    stream
+        .read_to_end(&mut response_bytes)
+        .await
+        .expect("read wire response");
+
+    let response_str = String::from_utf8_lossy(&response_bytes);
+
+    // Verify HTTP/1.1 wire status line
+    assert!(
+        response_str.starts_with("HTTP/1.1 200 OK"),
+        "Live TCP server must respond with HTTP/1.1 200 OK, got: {}",
+        response_str.lines().next().unwrap_or("")
+    );
+
+    // Verify response body is valid JSON with metrics
+    let body_start = response_str
+        .find("\r\n\r\n")
+        .expect("find HTTP body delimiter");
+    let json_body = &response_str[body_start + 4..];
+    let metrics: serde_json::Value = serde_json::from_str(json_body).expect("parse JSON wire body");
+
+    assert!(metrics.get("eps").is_some());
+    assert!(metrics.get("latency_p50_micros").is_some());
+    assert!(metrics.get("disposition_breakdown").is_some());
+
+    server_task.abort();
+}
