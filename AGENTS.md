@@ -1,6 +1,6 @@
 # AGENTS.md — ULPF (Universal Log Pre-processing Framework)
 
-Compact agent handbook for this Rust workspace. `README.md` and `docs/` have full docs — but **some README CLI examples are stale, trust `ulpf --help`** (see Gotchas). There is **no pre-commit or typecheck config**; run the local verification gate before every commit, and CI mirrors it on push/PR (with documented skips like the known flaky benchmark test). If local and CI disagree, CI is authoritative for mergeability.
+Compact agent handbook for this Rust workspace. `README.md` and `docs/` have full docs — but **some README CLI examples are stale, trust `ulpf --help`** (see Gotchas). There is **no pre-commit or typecheck config**; run the local verification gate before every commit, and CI mirrors it on PRs and on pushes except docs-only changes ignored by workflow `paths-ignore` (with documented skips like the known flaky benchmark test). If local and CI disagree, CI is authoritative for mergeability.
 
 ## Non-negotiable invariants
 
